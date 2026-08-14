@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>Stock Management System</title>
+
+    <link rel="stylesheet" href="/style.css">
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <!-- LOGIN -->
+
+        <div class="card" id="loginCard">
+
+            <div class="logo">
+                📦
+            </div>
+
+            <h1>Stock Management</h1>
+
+            <p class="subtitle">
+                Welcome back
+            </p>
+
+            <form id="loginForm">
+
+                <label for="loginUsername">
+                    Username
+                </label>
+
+                <input
+                    type="text"
+                    id="loginUsername"
+                    placeholder="Enter username"
+                    autocomplete="username"
+                    required
+                >
+
+                <label for="loginPassword">
+                    Password
+                </label>
+
+                <input
+                    type="password"
+                    id="loginPassword"
+                    placeholder="Enter password"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <button type="submit" class="main-button">
+                    LOGIN
+                </button>
+
+            </form>
+
+            <p class="switch">
+
+                Don't have an account?
+
+                <button
+                    type="button"
+                    id="showRegister">
+                    CREATE ACCOUNT
+                </button>
+
+            </p>
+
+        </div>
+
+
+        <!-- REGISTER -->
+
+        <div class="card hidden" id="registerCard">
+
+            <div class="logo">
+                📦
+            </div>
+
+            <h1>Stock Management</h1>
+
+            <p class="subtitle">
+                Create your account
+            </p>
+
+            <form id="registerForm">
+
+                <label for="registerUsername">
+                    Username
+                </label>
+
+                <input
+                    type="text"
+                    id="registerUsername"
+                    placeholder="Choose username"
+                    autocomplete="username"
+                    required
+                >
+
+                <label for="registerPassword">
+                    Password
+                </label>
+
+                <input
+                    type="password"
+                    id="registerPassword"
+                    placeholder="Create password"
+                    autocomplete="new-password"
+                    required
+                >
+
+                <label for="registerConfirm">
+                    Confirm Password
+                </label>
+
+                <input
+                    type="password"
+                    id="registerConfirm"
+                    placeholder="Confirm password"
+                    autocomplete="new-password"
+                    required
+                >
+
+                <button type="submit" class="main-button">
+                    REGISTER
+                </button>
+
+            </form>
+
+            <p class="switch">
+
+                Already have an account?
+
+                <button
+                    type="button"
+                    id="showLogin">
+                    BACK TO LOGIN
+                </button>
+
+            </p>
+
+        </div>
+
+    </div>
+
+    <script src="/script.js"></script>
+
+</body>
+
+</html>
