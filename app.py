@@ -25,7 +25,7 @@ DATABASE = "stock.db"
 
 
 # =========================================================
-# DATABASE
+# DATABASE CONNECTION
 # =========================================================
 
 def get_db():
@@ -44,11 +44,18 @@ def get_db():
     return conn
 
 
+# =========================================================
+# DATABASE INITIALIZATION
+# =========================================================
+
 def init_database():
 
     conn = get_db()
 
+    # -----------------------------------------------------
     # USERS
+    # -----------------------------------------------------
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,33 +66,38 @@ def init_database():
         )
     """)
 
+    # -----------------------------------------------------
     # PRODUCTS
+    # -----------------------------------------------------
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
             quantity INTEGER NOT NULL DEFAULT 0,
             purchase_price REAL NOT NULL DEFAULT 0,
             selling_price REAL NOT NULL DEFAULT 0,
+            owner_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # CASH
+    # -----------------------------------------------------
+    # CASH ACCOUNT
+    # -----------------------------------------------------
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cash_account (
-            id INTEGER PRIMARY KEY,
-            balance REAL NOT NULL DEFAULT 0
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            balance REAL NOT NULL DEFAULT 0,
+            owner_id INTEGER
         )
     """)
 
-    conn.execute("""
-        INSERT OR IGNORE INTO cash_account
-        (id, balance)
-        VALUES (1, 0)
-    """)
-
+    # -----------------------------------------------------
     # TRANSACTIONS
+    # -----------------------------------------------------
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,11 +126,16 @@ def init_database():
 
             description TEXT,
 
+            owner_id INTEGER,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
+    # -----------------------------------------------------
     # HISTORY
+    # -----------------------------------------------------
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,21 +154,93 @@ def init_database():
 
             username TEXT NOT NULL,
 
+            owner_id INTEGER,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
     conn.commit()
+
+    # =====================================================
+    # MIGRATION FOR OLD DATABASE
+    # =====================================================
+
+    migrate_column(
+        conn,
+        "products",
+        "owner_id"
+    )
+
+    migrate_column(
+        conn,
+        "cash_account",
+        "owner_id"
+    )
+
+    migrate_column(
+        conn,
+        "transactions",
+        "owner_id"
+    )
+
+    migrate_column(
+        conn,
+        "history",
+        "owner_id"
+    )
+
+    conn.commit()
+
     conn.close()
 
 
 # =========================================================
-# LOGIN
+# MIGRATION HELPER
+# =========================================================
+
+def migrate_column(
+    conn,
+    table_name,
+    column_name
+):
+
+    columns = conn.execute(
+        f"PRAGMA table_info({table_name})"
+    ).fetchall()
+
+    existing = [
+        column["name"]
+        for column in columns
+    ]
+
+    if column_name not in existing:
+
+        conn.execute(
+            f"""
+            ALTER TABLE {table_name}
+            ADD COLUMN {column_name} INTEGER
+            """
+        )
+
+
+# =========================================================
+# LOGIN HELPERS
 # =========================================================
 
 def logged_in():
 
     return "user_id" in session
+
+
+def current_user_id():
+
+    return session.get("user_id")
+
+
+def current_username():
+
+    return session.get("username")
 
 
 def login_required(function):
@@ -169,6 +258,51 @@ def login_required(function):
         return function(*args, **kwargs)
 
     return wrapper
+
+
+# =========================================================
+# CASH ACCOUNT FOR USER
+# =========================================================
+
+def ensure_cash_account(
+    conn,
+    user_id
+):
+
+    account = conn.execute("""
+        SELECT *
+        FROM cash_account
+        WHERE owner_id = ?
+        LIMIT 1
+    """, (
+        user_id,
+    )).fetchone()
+
+    if account:
+
+        return account
+
+    cursor = conn.execute("""
+        INSERT INTO cash_account
+        (
+            balance,
+            owner_id
+        )
+        VALUES (?, ?)
+    """, (
+        0,
+        user_id
+    ))
+
+    conn.commit()
+
+    return conn.execute("""
+        SELECT *
+        FROM cash_account
+        WHERE id = ?
+    """, (
+        cursor.lastrowid,
+    )).fetchone()
 
 
 # =========================================================
@@ -249,22 +383,40 @@ def register():
 
     try:
 
-        conn.execute("""
+        cursor = conn.execute("""
             INSERT INTO users
             (
                 username,
-                password
+                password,
+                role
+            )
+            VALUES (?, ?, ?)
+        """, (
+            username,
+            generate_password_hash(password),
+            "user"
+        ))
+
+        user_id = cursor.lastrowid
+
+        # Every new user gets his/her OWN cash account.
+        conn.execute("""
+            INSERT INTO cash_account
+            (
+                balance,
+                owner_id
             )
             VALUES (?, ?)
         """, (
-            username,
-            generate_password_hash(password)
+            0,
+            user_id
         ))
 
         conn.commit()
 
     except sqlite3.IntegrityError:
 
+        conn.rollback()
         conn.close()
 
         return jsonify(
@@ -319,9 +471,9 @@ def login():
         username,
     )).fetchone()
 
-    conn.close()
-
     if not user:
+
+        conn.close()
 
         return jsonify(
             success=False,
@@ -343,10 +495,22 @@ def login():
 
     if not valid:
 
+        conn.close()
+
         return jsonify(
             success=False,
             message="Invalid username or password."
         ), 401
+
+    # Make sure this user has a private cash account.
+    ensure_cash_account(
+        conn,
+        user["id"]
+    )
+
+    conn.close()
+
+    session.clear()
 
     session["user_id"] = user["id"]
     session["username"] = user["username"]
@@ -562,7 +726,7 @@ Welcome, {{ username }} 👋
 </h1>
 
 <div class="subtitle">
-Manage products, stock, cash, sales and profit.
+Your private stock management account.
 </div>
 
 <div class="cards">
@@ -738,31 +902,43 @@ def dashboard():
 
 # =========================================================
 # DASHBOARD DATA
+# IMPORTANT: EVERY QUERY USES OWNER_ID
 # =========================================================
 
 @app.route("/dashboard-data")
 @login_required
 def dashboard_data():
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     cash = conn.execute("""
         SELECT balance
         FROM cash_account
-        WHERE id = 1
-    """).fetchone()
+        WHERE owner_id = ?
+        LIMIT 1
+    """, (
+        user_id,
+    )).fetchone()
 
     total_products = conn.execute("""
         SELECT COUNT(*)
         FROM products
-    """).fetchone()[0]
+        WHERE owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     total_stock = conn.execute("""
         SELECT COALESCE(
             SUM(quantity), 0
         )
         FROM products
-    """).fetchone()[0]
+        WHERE owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     stock_value = conn.execute("""
         SELECT COALESCE(
@@ -770,7 +946,10 @@ def dashboard_data():
             0
         )
         FROM products
-    """).fetchone()[0]
+        WHERE owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     total_sales = conn.execute("""
         SELECT COALESCE(
@@ -778,7 +957,10 @@ def dashboard_data():
         )
         FROM transactions
         WHERE transaction_type = 'STOCK OUT'
-    """).fetchone()[0]
+        AND owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     profit = conn.execute("""
         SELECT COALESCE(
@@ -786,7 +968,10 @@ def dashboard_data():
         )
         FROM transactions
         WHERE transaction_type = 'STOCK OUT'
-    """).fetchone()[0]
+        AND owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     total_cash_out = conn.execute("""
         SELECT COALESCE(
@@ -794,35 +979,57 @@ def dashboard_data():
         )
         FROM transactions
         WHERE transaction_type = 'CASH OUT'
-    """).fetchone()[0]
+        AND owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     low_stock = conn.execute("""
         SELECT COUNT(*)
         FROM products
         WHERE quantity <= 5
-    """).fetchone()[0]
+        AND owner_id = ?
+    """, (
+        user_id,
+    )).fetchone()[0]
 
     conn.close()
 
     return jsonify(
         success=True,
+
         cash_balance=round(
-            float(cash["balance"] if cash else 0), 2
+            float(
+                cash["balance"]
+                if cash else 0
+            ),
+            2
         ),
+
         total_products=total_products,
+
         total_stock=total_stock,
+
         stock_value=round(
-            float(stock_value), 2
+            float(stock_value),
+            2
         ),
+
         total_sales=round(
-            float(total_sales), 2
+            float(total_sales),
+            2
         ),
+
         profit=round(
-            float(profit), 2
+            float(profit),
+            2
         ),
+
         total_cash_out=round(
-            float(total_cash_out), 2
+            float(total_cash_out),
+            2
         ),
+
         low_stock=low_stock
     )
 
@@ -1011,6 +1218,7 @@ async function loadBalance() {
     }
 }
 
+
 async function sendCash(
     type,
     amount,
@@ -1066,6 +1274,7 @@ async function sendCash(
     }
 }
 
+
 function cashIn() {
 
     const amount =
@@ -1096,6 +1305,7 @@ function cashIn() {
     );
 }
 
+
 function cashOut() {
 
     const amount =
@@ -1125,6 +1335,7 @@ function cashOut() {
         description
     );
 }
+
 
 loadBalance();
 
@@ -1208,17 +1419,20 @@ def cash_transaction():
             message="Invalid cash transaction."
         ), 400
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     try:
 
-        row = conn.execute("""
-            SELECT balance
-            FROM cash_account
-            WHERE id = 1
-        """).fetchone()
+        account = ensure_cash_account(
+            conn,
+            user_id
+        )
 
-        before = float(row["balance"])
+        before = float(
+            account["balance"]
+        )
 
         if (
             transaction_type == "CASH OUT"
@@ -1229,7 +1443,10 @@ def cash_transaction():
 
             return jsonify(
                 success=False,
-                message=f"Not enough cash. Available: {before:,.2f} Frw."
+                message=(
+                    f"Not enough cash. "
+                    f"Available: {before:,.2f} Frw."
+                )
             ), 400
 
         if transaction_type == "CASH IN":
@@ -1243,9 +1460,10 @@ def cash_transaction():
         conn.execute("""
             UPDATE cash_account
             SET balance = ?
-            WHERE id = 1
+            WHERE owner_id = ?
         """, (
             after,
+            user_id
         ))
 
         conn.execute("""
@@ -1256,16 +1474,18 @@ def cash_transaction():
                 cash_before,
                 cash_after,
                 username,
-                description
+                description,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             transaction_type,
             amount,
             before,
             after,
-            session["username"],
-            description
+            current_username(),
+            description,
+            user_id
         ))
 
         conn.commit()
@@ -1885,6 +2105,7 @@ def products_page():
 
 # =========================================================
 # GET PRODUCTS
+# USER CAN ONLY SEE HIS PRODUCTS
 # =========================================================
 
 @app.route("/api/products")
@@ -1896,8 +2117,11 @@ def get_products():
     products = conn.execute("""
         SELECT *
         FROM products
+        WHERE owner_id = ?
         ORDER BY id DESC
-    """).fetchall()
+    """, (
+        current_user_id(),
+    )).fetchall()
 
     conn.close()
 
@@ -1984,7 +2208,29 @@ def add_product():
             message="Prices cannot be negative."
         ), 400
 
+    user_id = current_user_id()
+
     conn = get_db()
+
+    # Product name is unique PER USER.
+    existing = conn.execute("""
+        SELECT id
+        FROM products
+        WHERE name = ?
+        AND owner_id = ?
+    """, (
+        name,
+        user_id
+    )).fetchone()
+
+    if existing:
+
+        conn.close()
+
+        return jsonify(
+            success=False,
+            message="You already have a product with this name."
+        ), 409
 
     try:
 
@@ -1994,14 +2240,16 @@ def add_product():
                 name,
                 quantity,
                 purchase_price,
-                selling_price
+                selling_price,
+                owner_id
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
         """, (
             name,
             quantity,
             purchase,
-            selling
+            selling,
+            user_id
         ))
 
         product_id = cursor.lastrowid
@@ -2017,9 +2265,10 @@ def add_product():
                     quantity,
                     previous_quantity,
                     new_quantity,
-                    username
+                    username,
+                    owner_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 product_id,
                 name,
@@ -2027,20 +2276,23 @@ def add_product():
                 quantity,
                 0,
                 quantity,
-                session["username"]
+                current_username(),
+                user_id
             ))
 
         conn.commit()
 
-    except sqlite3.IntegrityError:
+    except Exception as error:
 
         conn.rollback()
         conn.close()
 
+        print(error)
+
         return jsonify(
             success=False,
-            message="Product already exists."
-        ), 409
+            message="Product could not be added."
+        ), 500
 
     conn.close()
 
@@ -2051,7 +2303,7 @@ def add_product():
 
 
 # =========================================================
-# EDIT PRODUCT PRICE
+# EDIT PRODUCT
 # =========================================================
 
 @app.route(
@@ -2107,14 +2359,18 @@ def edit_product(product_id):
             message="Prices cannot be negative."
         ), 400
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     product = conn.execute("""
         SELECT *
         FROM products
         WHERE id = ?
+        AND owner_id = ?
     """, (
         product_id,
+        user_id
     )).fetchone()
 
     if not product:
@@ -2126,34 +2382,44 @@ def edit_product(product_id):
             message="Product not found."
         ), 404
 
-    try:
+    duplicate = conn.execute("""
+        SELECT id
+        FROM products
+        WHERE name = ?
+        AND owner_id = ?
+        AND id != ?
+    """, (
+        name,
+        user_id,
+        product_id
+    )).fetchone()
 
-        conn.execute("""
-            UPDATE products
-            SET
-                name = ?,
-                purchase_price = ?,
-                selling_price = ?
-            WHERE id = ?
-        """, (
-            name,
-            purchase,
-            selling,
-            product_id
-        ))
+    if duplicate:
 
-        conn.commit()
-
-    except sqlite3.IntegrityError:
-
-        conn.rollback()
         conn.close()
 
         return jsonify(
             success=False,
-            message="Another product already has that name."
+            message="You already have another product with that name."
         ), 409
 
+    conn.execute("""
+        UPDATE products
+        SET
+            name = ?,
+            purchase_price = ?,
+            selling_price = ?
+        WHERE id = ?
+        AND owner_id = ?
+    """, (
+        name,
+        purchase,
+        selling,
+        product_id,
+        user_id
+    ))
+
+    conn.commit()
     conn.close()
 
     return jsonify(
@@ -2163,7 +2429,7 @@ def edit_product(product_id):
 
 
 # =========================================================
-# ⭐ EDIT STOCK WITH AUTOMATIC CASH CORRECTION
+# EDIT STOCK
 # =========================================================
 
 @app.route(
@@ -2211,6 +2477,8 @@ def edit_stock(product_id):
             message="Quantity cannot be negative."
         ), 400
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     try:
@@ -2219,8 +2487,10 @@ def edit_stock(product_id):
             SELECT *
             FROM products
             WHERE id = ?
+            AND owner_id = ?
         """, (
             product_id,
+            user_id
         )).fetchone()
 
         if not product:
@@ -2245,10 +2515,6 @@ def edit_stock(product_id):
             old_quantity
         )
 
-        # -------------------------------------------------
-        # NO CHANGE
-        # -------------------------------------------------
-
         if difference == 0:
 
             conn.close()
@@ -2258,30 +2524,14 @@ def edit_stock(product_id):
                 message="No stock change was necessary."
             )
 
-        # -------------------------------------------------
-        # GET CASH
-        # -------------------------------------------------
-
-        cash_row = conn.execute("""
-            SELECT balance
-            FROM cash_account
-            WHERE id = 1
-        """).fetchone()
-
-        cash_before = float(
-            cash_row["balance"]
+        account = ensure_cash_account(
+            conn,
+            user_id
         )
 
-        # -------------------------------------------------
-        # INCREASE STOCK
-        #
-        # Example:
-        # old = 2
-        # new = 3
-        # difference = +1
-        #
-        # Cash decreases by purchase price.
-        # -------------------------------------------------
+        cash_before = float(
+            account["balance"]
+        )
 
         if difference > 0:
 
@@ -2297,8 +2547,7 @@ def edit_stock(product_id):
                 return jsonify(
                     success=False,
                     message=(
-                        f"Not enough cash for this "
-                        f"stock increase.\n\n"
+                        f"Not enough cash.\n\n"
                         f"Additional stock: {difference}\n"
                         f"Cost: {correction_cost:,.2f} Frw\n"
                         f"Available cash: {cash_before:,.2f} Frw"
@@ -2310,26 +2559,9 @@ def edit_stock(product_id):
                 correction_cost
             )
 
-            description = (
-                f"Stock correction +{difference}. "
-                f"{reason}"
-            )
-
             transaction_type = "STOCK EDIT IN"
 
             amount = correction_cost
-
-        # -------------------------------------------------
-        # DECREASE STOCK
-        #
-        # Example:
-        # old = 3
-        # new = 2
-        # difference = -1
-        #
-        # Cash increases because the system reverses
-        # the purchase cost of the removed stock.
-        # -------------------------------------------------
 
         else:
 
@@ -2347,43 +2579,29 @@ def edit_stock(product_id):
                 correction_value
             )
 
-            description = (
-                f"Stock correction -{removed_quantity}. "
-                f"{reason}"
-            )
-
             transaction_type = "STOCK EDIT OUT"
 
             amount = correction_value
-
-        # -------------------------------------------------
-        # UPDATE STOCK
-        # -------------------------------------------------
 
         conn.execute("""
             UPDATE products
             SET quantity = ?
             WHERE id = ?
+            AND owner_id = ?
         """, (
             new_quantity,
-            product_id
+            product_id,
+            user_id
         ))
-
-        # -------------------------------------------------
-        # UPDATE CASH
-        # -------------------------------------------------
 
         conn.execute("""
             UPDATE cash_account
             SET balance = ?
-            WHERE id = 1
+            WHERE owner_id = ?
         """, (
             cash_after,
+            user_id
         ))
-
-        # -------------------------------------------------
-        # TRANSACTION
-        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO transactions
@@ -2402,9 +2620,10 @@ def edit_stock(product_id):
                 stock_before,
                 stock_after,
                 username,
-                description
+                description,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             transaction_type,
             product_id,
@@ -2419,13 +2638,10 @@ def edit_stock(product_id):
             cash_after,
             old_quantity,
             new_quantity,
-            session["username"],
-            description
+            current_username(),
+            reason,
+            user_id
         ))
-
-        # -------------------------------------------------
-        # HISTORY
-        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO history
@@ -2436,9 +2652,10 @@ def edit_stock(product_id):
                 quantity,
                 previous_quantity,
                 new_quantity,
-                username
+                username,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             product_id,
             product["name"],
@@ -2446,7 +2663,8 @@ def edit_stock(product_id):
             abs(difference),
             old_quantity,
             new_quantity,
-            session["username"]
+            current_username(),
+            user_id
         ))
 
         conn.commit()
@@ -2506,14 +2724,18 @@ def edit_stock(product_id):
 @login_required
 def delete_product(product_id):
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     product = conn.execute("""
         SELECT *
         FROM products
         WHERE id = ?
+        AND owner_id = ?
     """, (
         product_id,
+        user_id
     )).fetchone()
 
     if not product:
@@ -2540,8 +2762,10 @@ def delete_product(product_id):
     conn.execute("""
         DELETE FROM products
         WHERE id = ?
+        AND owner_id = ?
     """, (
         product_id,
+        user_id
     ))
 
     conn.commit()
@@ -2643,15 +2867,11 @@ Stock In Calculation
 
 <br><br>
 
-The system automatically calculates:
-
-<br><br>
-
 Quantity × Purchase Price
 
 <br><br>
 
-The cost is removed from Cash Balance.
+The cost is removed from YOUR Cash Balance.
 
 </div>
 
@@ -2676,6 +2896,18 @@ id="quantity"
 type="number"
 min="1"
 placeholder="Quantity"
+>
+
+<label>
+Purchase Price Per Unit
+</label>
+
+<input
+id="purchasePrice"
+type="number"
+min="0"
+step="0.01"
+placeholder="Purchase price"
 >
 
 <button
@@ -2712,11 +2944,13 @@ async function loadProducts() {
 
             select.innerHTML += `
 
-            <option value="${p.id}">
+            <option
+            value="${p.id}"
+            data-price="${p.purchase_price}">
 
             ${p.name}
             — Stock: ${p.quantity}
-            — Buy:
+            — Current Buy:
             ${Number(
                 p.purchase_price
             ).toLocaleString()}
@@ -2728,6 +2962,34 @@ async function loadProducts() {
         }
     );
 }
+
+
+document.getElementById(
+    "product"
+).addEventListener(
+    "change",
+    function() {
+
+        const option =
+            this.options[
+                this.selectedIndex
+            ];
+
+        const price =
+            option.getAttribute(
+                "data-price"
+            );
+
+        if(price !== null) {
+
+            document.getElementById(
+                "purchasePrice"
+            ).value = price;
+
+        }
+
+    }
+);
 
 
 async function stockIn() {
@@ -2744,13 +3006,21 @@ async function stockIn() {
             ).value
         );
 
+    const purchasePrice =
+        Number(
+            document.getElementById(
+                "purchasePrice"
+            ).value
+        );
+
     if(
         !productId ||
-        quantity <= 0
+        quantity <= 0 ||
+        purchasePrice < 0
     ) {
 
         alert(
-            "Select a product and enter valid quantity."
+            "Enter valid stock information."
         );
 
         return;
@@ -2774,7 +3044,10 @@ async function stockIn() {
                         product_id:
                             Number(productId),
 
-                        quantity
+                        quantity,
+
+                        purchase_price:
+                            purchasePrice
 
                     })
             }
@@ -2820,7 +3093,7 @@ def stock_in_page():
 
 
 # =========================================================
-# ⭐ STOCK IN API WITH AVERAGE PURCHASE PRICE
+# STOCK IN API
 # =========================================================
 
 @app.route(
@@ -2851,11 +3124,15 @@ def stock_in():
             data.get("quantity")
         )
 
+        new_purchase_price = float(
+            data.get("purchase_price")
+        )
+
     except Exception:
 
         return jsonify(
             success=False,
-            message="Invalid product or quantity."
+            message="Invalid product, quantity or purchase price."
         ), 400
 
     if quantity <= 0:
@@ -2865,6 +3142,15 @@ def stock_in():
             message="Quantity must be greater than zero."
         ), 400
 
+    if new_purchase_price < 0:
+
+        return jsonify(
+            success=False,
+            message="Purchase price cannot be negative."
+        ), 400
+
+    user_id = current_user_id()
+
     conn = get_db()
 
     try:
@@ -2873,8 +3159,10 @@ def stock_in():
             SELECT *
             FROM products
             WHERE id = ?
+            AND owner_id = ?
         """, (
             product_id,
+            user_id
         )).fetchone()
 
         if not product:
@@ -2898,40 +3186,18 @@ def stock_in():
             product["selling_price"]
         )
 
-        # -------------------------------------------------
-        # USER CAN ENTER PURCHASE PRICE FOR THIS STOCK IN
-        # -------------------------------------------------
-
-        # If frontend did not send it, use current price.
-        new_purchase_price = float(
-            data.get(
-                "purchase_price",
-                old_purchase_price
-            )
-        )
-
-        if new_purchase_price < 0:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message="Purchase price cannot be negative."
-            ), 400
-
         cost = (
             quantity *
             new_purchase_price
         )
 
-        cash_row = conn.execute("""
-            SELECT balance
-            FROM cash_account
-            WHERE id = 1
-        """).fetchone()
+        account = ensure_cash_account(
+            conn,
+            user_id
+        )
 
         cash_before = float(
-            cash_row["balance"]
+            account["balance"]
         )
 
         if cost > cash_before:
@@ -2958,34 +3224,24 @@ def stock_in():
             cost
         )
 
-        # -------------------------------------------------
-        # AVERAGE PURCHASE PRICE
-        # -------------------------------------------------
+        total_old_value = (
+            old_stock *
+            old_purchase_price
+        )
 
-        if new_stock > 0:
+        total_new_value = (
+            quantity *
+            new_purchase_price
+        )
 
-            total_old_value = (
-                old_stock *
-                old_purchase_price
-            )
-
-            total_new_value = (
-                quantity *
-                new_purchase_price
-            )
-
-            average_price = (
+        average_price = (
+            (
                 total_old_value +
                 total_new_value
-            ) / new_stock
-
-        else:
-
-            average_price = new_purchase_price
-
-        # -------------------------------------------------
-        # UPDATE PRODUCT
-        # -------------------------------------------------
+            )
+            /
+            new_stock
+        )
 
         conn.execute("""
             UPDATE products
@@ -2993,27 +3249,22 @@ def stock_in():
                 quantity = ?,
                 purchase_price = ?
             WHERE id = ?
+            AND owner_id = ?
         """, (
             new_stock,
             average_price,
-            product_id
+            product_id,
+            user_id
         ))
-
-        # -------------------------------------------------
-        # UPDATE CASH
-        # -------------------------------------------------
 
         conn.execute("""
             UPDATE cash_account
             SET balance = ?
-            WHERE id = 1
+            WHERE owner_id = ?
         """, (
             cash_after,
+            user_id
         ))
-
-        # -------------------------------------------------
-        # TRANSACTION
-        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO transactions
@@ -3032,9 +3283,10 @@ def stock_in():
                 stock_before,
                 stock_after,
                 username,
-                description
+                description,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "STOCK IN",
             product_id,
@@ -3049,18 +3301,15 @@ def stock_in():
             cash_after,
             old_stock,
             new_stock,
-            session["username"],
+            current_username(),
             (
                 f"Stock purchased at "
                 f"{new_purchase_price:,.2f} Frw/unit. "
                 f"Average cost now "
                 f"{average_price:,.2f} Frw/unit."
-            )
+            ),
+            user_id
         ))
-
-        # -------------------------------------------------
-        # HISTORY
-        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO history
@@ -3071,9 +3320,10 @@ def stock_in():
                 quantity,
                 previous_quantity,
                 new_quantity,
-                username
+                username,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             product_id,
             product["name"],
@@ -3081,7 +3331,8 @@ def stock_in():
             quantity,
             old_stock,
             new_stock,
-            session["username"]
+            current_username(),
+            user_id
         ))
 
         conn.commit()
@@ -3432,6 +3683,8 @@ def stock_out():
             message="Quantity must be greater than zero."
         ), 400
 
+    user_id = current_user_id()
+
     conn = get_db()
 
     try:
@@ -3440,8 +3693,10 @@ def stock_out():
             SELECT *
             FROM products
             WHERE id = ?
+            AND owner_id = ?
         """, (
             product_id,
+            user_id
         )).fetchone()
 
         if not product:
@@ -3492,14 +3747,13 @@ def stock_out():
             cost_amount
         )
 
-        cash_row = conn.execute("""
-            SELECT balance
-            FROM cash_account
-            WHERE id = 1
-        """).fetchone()
+        account = ensure_cash_account(
+            conn,
+            user_id
+        )
 
         cash_before = float(
-            cash_row["balance"]
+            account["balance"]
         )
 
         cash_after = (
@@ -3516,17 +3770,20 @@ def stock_out():
             UPDATE products
             SET quantity = ?
             WHERE id = ?
+            AND owner_id = ?
         """, (
             new_stock,
-            product_id
+            product_id,
+            user_id
         ))
 
         conn.execute("""
             UPDATE cash_account
             SET balance = ?
-            WHERE id = 1
+            WHERE owner_id = ?
         """, (
             cash_after,
+            user_id
         ))
 
         conn.execute("""
@@ -3546,9 +3803,10 @@ def stock_out():
                 stock_before,
                 stock_after,
                 username,
-                description
+                description,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "STOCK OUT",
             product_id,
@@ -3563,8 +3821,9 @@ def stock_out():
             cash_after,
             old_stock,
             new_stock,
-            session["username"],
-            f"Sale. Profit: {profit:,.2f}"
+            current_username(),
+            f"Sale. Profit: {profit:,.2f}",
+            user_id
         ))
 
         conn.execute("""
@@ -3576,9 +3835,10 @@ def stock_out():
                 quantity,
                 previous_quantity,
                 new_quantity,
-                username
+                username,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             product_id,
             product["name"],
@@ -3586,7 +3846,8 @@ def stock_out():
             quantity,
             old_stock,
             new_stock,
-            session["username"]
+            current_username(),
+            user_id
         ))
 
         conn.commit()
@@ -3702,7 +3963,7 @@ th {
 </a>
 
 <h1>
-🧾 Transaction History
+🧾 My Transaction History
 </h1>
 
 <div class="table-box">
@@ -3898,6 +4159,7 @@ def history_page():
 
 # =========================================================
 # TRANSACTIONS API
+# USER SEES ONLY HIS TRANSACTIONS
 # =========================================================
 
 @app.route("/api/transactions")
@@ -3909,8 +4171,11 @@ def get_transactions():
     transactions = conn.execute("""
         SELECT *
         FROM transactions
+        WHERE owner_id = ?
         ORDER BY id DESC
-    """).fetchall()
+    """, (
+        current_user_id(),
+    )).fetchall()
 
     conn.close()
 
@@ -3936,8 +4201,11 @@ def get_history():
     history = conn.execute("""
         SELECT *
         FROM history
+        WHERE owner_id = ?
         ORDER BY id DESC
-    """).fetchall()
+    """, (
+        current_user_id(),
+    )).fetchall()
 
     conn.close()
 
@@ -3961,12 +4229,14 @@ def create_default_admin():
     user = conn.execute("""
         SELECT *
         FROM users
-        LIMIT 1
-    """).fetchone()
+        WHERE username = ?
+    """, (
+        "admin",
+    )).fetchone()
 
     if not user:
 
-        conn.execute("""
+        cursor = conn.execute("""
             INSERT INTO users
             (
                 username,
@@ -3982,21 +4252,114 @@ def create_default_admin():
             "admin"
         ))
 
+        admin_id = cursor.lastrowid
+
+        conn.execute("""
+            INSERT INTO cash_account
+            (
+                balance,
+                owner_id
+            )
+            VALUES (?, ?)
+        """, (
+            0,
+            admin_id
+        ))
+
         conn.commit()
 
-        print(
-            "Default account created:"
+        print()
+        print("Default account created:")
+        print("Username: admin")
+        print("Password: admin123")
+        print()
+
+    else:
+
+        # Make sure old admin has a cash account.
+        ensure_cash_account(
+            conn,
+            user["id"]
         )
 
-        print(
-            "Username: admin"
-        )
+    # -----------------------------------------------------
+    # IMPORTANT MIGRATION:
+    #
+    # Old records from the previous version had no owner_id.
+    # We attach those old records to the admin account.
+    # New users will NOT see them.
+    # -----------------------------------------------------
 
-        print(
-            "Password: admin123"
-        )
+    admin = conn.execute("""
+        SELECT id
+        FROM users
+        WHERE username = ?
+    """, (
+        "admin",
+    )).fetchone()
+
+    if admin:
+
+        admin_id = admin["id"]
+
+        conn.execute("""
+            UPDATE products
+            SET owner_id = ?
+            WHERE owner_id IS NULL
+        """, (
+            admin_id,
+        ))
+
+        conn.execute("""
+            UPDATE transactions
+            SET owner_id = ?
+            WHERE owner_id IS NULL
+        """, (
+            admin_id,
+        ))
+
+        conn.execute("""
+            UPDATE history
+            SET owner_id = ?
+            WHERE owner_id IS NULL
+        """, (
+            admin_id,
+        ))
+
+        # Old cash account id=1 belongs to admin
+        old_cash = conn.execute("""
+            SELECT *
+            FROM cash_account
+            WHERE owner_id IS NULL
+            ORDER BY id
+            LIMIT 1
+        """).fetchone()
+
+        if old_cash:
+
+            conn.execute("""
+                UPDATE cash_account
+                SET owner_id = ?
+                WHERE id = ?
+            """, (
+                admin_id,
+                old_cash["id"]
+            ))
+
+        conn.commit()
 
     conn.close()
+
+
+# =========================================================
+# SECURITY SETTINGS
+# =========================================================
+
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# When deployed with HTTPS, change this to True.
+app.config["SESSION_COOKIE_SECURE"] = False
 
 
 # =========================================================
