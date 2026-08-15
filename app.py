@@ -14,7 +14,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 
 # =========================================================
-# APP CONFIGURATION
+# CONFIGURATION
 # =========================================================
 
 app = Flask(__name__)
@@ -25,7 +25,7 @@ DATABASE = "stock.db"
 
 
 # =========================================================
-# DATABASE CONNECTION
+# DATABASE
 # =========================================================
 
 def get_db():
@@ -37,23 +37,18 @@ def get_db():
 
     conn.row_factory = sqlite3.Row
 
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(
+        "PRAGMA foreign_keys = ON"
+    )
 
     return conn
 
-
-# =========================================================
-# DATABASE INITIALIZATION
-# =========================================================
 
 def init_database():
 
     conn = get_db()
 
-    # -----------------------------------------------------
     # USERS
-    # -----------------------------------------------------
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,10 +59,7 @@ def init_database():
         )
     """)
 
-    # -----------------------------------------------------
     # PRODUCTS
-    # -----------------------------------------------------
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,10 +71,7 @@ def init_database():
         )
     """)
 
-    # -----------------------------------------------------
-    # CASH ACCOUNT
-    # -----------------------------------------------------
-
+    # CASH
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cash_account (
             id INTEGER PRIMARY KEY,
@@ -96,144 +85,68 @@ def init_database():
         VALUES (1, 0)
     """)
 
-    # -----------------------------------------------------
     # TRANSACTIONS
-    # -----------------------------------------------------
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             transaction_type TEXT NOT NULL,
+
             product_id INTEGER,
             product_name TEXT,
+
             quantity INTEGER DEFAULT 0,
+
             purchase_price REAL DEFAULT 0,
             selling_price REAL DEFAULT 0,
-            amount REAL NOT NULL DEFAULT 0,
+
+            amount REAL DEFAULT 0,
             cost_amount REAL DEFAULT 0,
             profit REAL DEFAULT 0,
-            cash_before REAL NOT NULL DEFAULT 0,
-            cash_after REAL NOT NULL DEFAULT 0,
+
+            cash_before REAL DEFAULT 0,
+            cash_after REAL DEFAULT 0,
+
             stock_before INTEGER DEFAULT 0,
             stock_after INTEGER DEFAULT 0,
-            username TEXT NOT NULL,
+
+            username TEXT,
+
             description TEXT,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # -----------------------------------------------------
-    # STOCK HISTORY
-    # -----------------------------------------------------
-
+    # HISTORY
     conn.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             product_id INTEGER,
+
             product_name TEXT NOT NULL,
+
             action TEXT NOT NULL,
+
             quantity INTEGER NOT NULL,
+
             previous_quantity INTEGER NOT NULL,
+
             new_quantity INTEGER NOT NULL,
+
             username TEXT NOT NULL,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # -----------------------------------------------------
-    # MIGRATIONS
-    # -----------------------------------------------------
-
-    migrations = [
-
-        ("users", "role",
-         "TEXT NOT NULL DEFAULT 'user'"),
-
-        ("products", "purchase_price",
-         "REAL NOT NULL DEFAULT 0"),
-
-        ("products", "selling_price",
-         "REAL NOT NULL DEFAULT 0"),
-
-        ("transactions", "product_id",
-         "INTEGER"),
-
-        ("transactions", "product_name",
-         "TEXT"),
-
-        ("transactions", "quantity",
-         "INTEGER DEFAULT 0"),
-
-        ("transactions", "purchase_price",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "selling_price",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "amount",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "cost_amount",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "profit",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "cash_before",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "cash_after",
-         "REAL DEFAULT 0"),
-
-        ("transactions", "stock_before",
-         "INTEGER DEFAULT 0"),
-
-        ("transactions", "stock_after",
-         "INTEGER DEFAULT 0"),
-
-        ("transactions", "username",
-         "TEXT"),
-
-        ("transactions", "description",
-         "TEXT")
-    ]
-
-    for table, column, definition in migrations:
-
-        try:
-
-            columns = conn.execute(
-                f"PRAGMA table_info({table})"
-            ).fetchall()
-
-            existing = [
-                row["name"]
-                for row in columns
-            ]
-
-            if column not in existing:
-
-                conn.execute(
-                    f"""
-                    ALTER TABLE {table}
-                    ADD COLUMN {column} {definition}
-                    """
-                )
-
-        except Exception as error:
-
-            print(
-                f"Migration warning: "
-                f"{table}.{column}: {error}"
-            )
-
     conn.commit()
-
     conn.close()
 
 
 # =========================================================
-# LOGIN CHECK
+# LOGIN
 # =========================================================
 
 def logged_in():
@@ -259,7 +172,7 @@ def login_required(function):
 
 
 # =========================================================
-# HOME
+# HOME FILES
 # =========================================================
 
 @app.route("/")
@@ -322,29 +235,19 @@ def register():
 
         return jsonify(
             success=False,
-            message=(
-                "Username must contain "
-                "at least 3 characters."
-            )
+            message="Username must contain at least 3 characters."
         ), 400
 
     if len(password) < 4:
 
         return jsonify(
             success=False,
-            message=(
-                "Password must contain "
-                "at least 4 characters."
-            )
+            message="Password must contain at least 4 characters."
         ), 400
 
     conn = get_db()
 
     try:
-
-        password_hash = generate_password_hash(
-            password
-        )
 
         conn.execute("""
             INSERT INTO users
@@ -355,7 +258,7 @@ def register():
             VALUES (?, ?)
         """, (
             username,
-            password_hash
+            generate_password_hash(password)
         ))
 
         conn.commit()
@@ -425,8 +328,6 @@ def login():
             message="Invalid username or password."
         ), 401
 
-    valid = False
-
     try:
 
         valid = check_password_hash(
@@ -448,9 +349,7 @@ def login():
         ), 401
 
     session["user_id"] = user["id"]
-
     session["username"] = user["username"]
-
     session["role"] = user["role"]
 
     return jsonify(
@@ -473,11 +372,10 @@ def logout():
 
 
 # =========================================================
-# DASHBOARD HTML
+# DASHBOARD
 # =========================================================
 
 DASHBOARD_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -670,131 +568,43 @@ Manage products, stock, cash, sales and profit.
 <div class="cards">
 
 <div class="card">
-
-<div class="title">
-💰 CASH BALANCE
-</div>
-
-<div
-id="cashBalance"
-class="number cash">
-
-0
-
-</div>
-
+<div class="title">💰 CASH BALANCE</div>
+<div id="cashBalance" class="number cash">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-💵 TOTAL SALES
-</div>
-
-<div
-id="totalSales"
-class="number sales">
-
-0
-
-</div>
-
+<div class="title">💵 TOTAL SALES</div>
+<div id="totalSales" class="number sales">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-📈 PROFIT
-</div>
-
-<div
-id="profit"
-class="number profit">
-
-0
-
-</div>
-
+<div class="title">📈 PROFIT</div>
+<div id="profit" class="number profit">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-📊 STOCK VALUE
-</div>
-
-<div
-id="stockValue"
-class="number stock">
-
-0
-
-</div>
-
+<div class="title">📊 STOCK VALUE</div>
+<div id="stockValue" class="number stock">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-📦 PRODUCTS
-</div>
-
-<div
-id="totalProducts"
-class="number">
-
-0
-
-</div>
-
+<div class="title">📦 PRODUCTS</div>
+<div id="totalProducts" class="number">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-📦 TOTAL STOCK
-</div>
-
-<div
-id="totalStock"
-class="number">
-
-0
-
-</div>
-
+<div class="title">📦 TOTAL STOCK</div>
+<div id="totalStock" class="number">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-⚠️ LOW STOCK
-</div>
-
-<div
-id="lowStock"
-class="number low">
-
-0
-
-</div>
-
+<div class="title">⚠️ LOW STOCK</div>
+<div id="lowStock" class="number low">0</div>
 </div>
 
 <div class="card">
-
-<div class="title">
-💸 CASH OUT
-</div>
-
-<div
-id="cashOut"
-class="number low">
-
-0
-
-</div>
-
+<div class="title">💸 CASH OUT</div>
+<div id="cashOut" class="number low">0</div>
 </div>
 
 </div>
@@ -832,16 +642,12 @@ async function loadDashboard() {
     try {
 
         const response =
-            await fetch(
-                "/dashboard-data"
-            );
+            await fetch("/dashboard-data");
 
         const data =
             await response.json();
 
-        if (!data.success) {
-            return;
-        }
+        if (!data.success) return;
 
         document.getElementById(
             "cashBalance"
@@ -914,13 +720,8 @@ setInterval(
 </body>
 
 </html>
-
 """
 
-
-# =========================================================
-# DASHBOARD
-# =========================================================
 
 @app.route("/dashboard")
 def dashboard():
@@ -951,12 +752,6 @@ def dashboard_data():
         WHERE id = 1
     """).fetchone()
 
-    cash_balance = (
-        cash["balance"]
-        if cash
-        else 0
-    )
-
     total_products = conn.execute("""
         SELECT COUNT(*)
         FROM products
@@ -964,18 +759,14 @@ def dashboard_data():
 
     total_stock = conn.execute("""
         SELECT COALESCE(
-            SUM(quantity),
-            0
+            SUM(quantity), 0
         )
         FROM products
     """).fetchone()[0]
 
     stock_value = conn.execute("""
         SELECT COALESCE(
-            SUM(
-                quantity *
-                purchase_price
-            ),
+            SUM(quantity * purchase_price),
             0
         )
         FROM products
@@ -983,32 +774,26 @@ def dashboard_data():
 
     total_sales = conn.execute("""
         SELECT COALESCE(
-            SUM(amount),
-            0
+            SUM(amount), 0
         )
         FROM transactions
-        WHERE transaction_type =
-            'STOCK OUT'
+        WHERE transaction_type = 'STOCK OUT'
     """).fetchone()[0]
 
-    total_profit = conn.execute("""
+    profit = conn.execute("""
         SELECT COALESCE(
-            SUM(profit),
-            0
+            SUM(profit), 0
         )
         FROM transactions
-        WHERE transaction_type =
-            'STOCK OUT'
+        WHERE transaction_type = 'STOCK OUT'
     """).fetchone()[0]
 
     total_cash_out = conn.execute("""
         SELECT COALESCE(
-            SUM(amount),
-            0
+            SUM(amount), 0
         )
         FROM transactions
-        WHERE transaction_type =
-            'CASH OUT'
+        WHERE transaction_type = 'CASH OUT'
     """).fetchone()[0]
 
     low_stock = conn.execute("""
@@ -1020,38 +805,24 @@ def dashboard_data():
     conn.close()
 
     return jsonify(
-
         success=True,
-
         cash_balance=round(
-            float(cash_balance),
-            2
+            float(cash["balance"] if cash else 0), 2
         ),
-
         total_products=total_products,
-
         total_stock=total_stock,
-
         stock_value=round(
-            float(stock_value),
-            2
+            float(stock_value), 2
         ),
-
         total_sales=round(
-            float(total_sales),
-            2
+            float(total_sales), 2
         ),
-
         profit=round(
-            float(total_profit),
-            2
+            float(profit), 2
         ),
-
         total_cash_out=round(
-            float(total_cash_out),
-            2
+            float(total_cash_out), 2
         ),
-
         low_stock=low_stock
     )
 
@@ -1061,7 +832,6 @@ def dashboard_data():
 # =========================================================
 
 CASH_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -1122,10 +892,6 @@ button {
     background: #ef4444;
 }
 
-.back {
-    text-decoration: none;
-}
-
 .balance {
     font-size: 35px;
     font-weight: bold;
@@ -1140,12 +906,8 @@ button {
 
 <div class="container">
 
-<a
-class="back"
-href="/dashboard">
-
+<a href="/dashboard">
 ← Dashboard
-
 </a>
 
 <h1>
@@ -1158,12 +920,9 @@ href="/dashboard">
 Current Cash Balance
 </div>
 
-<div
-id="balance"
+<div id="balance"
 class="balance">
-
 0
-
 </div>
 
 </div>
@@ -1234,32 +993,20 @@ REMOVE CASH
 
 async function loadBalance() {
 
-    try {
+    const response =
+        await fetch("/dashboard-data");
 
-        const response =
-            await fetch(
-                "/dashboard-data"
-            );
+    const data =
+        await response.json();
 
-        const data =
-            await response.json();
+    if(data.success) {
 
-        if(data.success) {
-
-            document.getElementById(
-                "balance"
-            ).textContent =
-                Number(
-                    data.cash_balance
-                ).toLocaleString();
-
-        }
-
-    }
-
-    catch(error) {
-
-        console.log(error);
+        document.getElementById(
+            "balance"
+        ).textContent =
+            Number(
+                data.cash_balance
+            ).toLocaleString();
 
     }
 }
@@ -1270,75 +1017,51 @@ async function sendCash(
     description
 ) {
 
-    try {
+    const response =
+        await fetch(
+            "/api/cash",
+            {
 
-        const response =
-            await fetch(
-                "/api/cash",
-                {
+                method: "POST",
 
-                    method:
-                        "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            type:
-                                type,
-
-                            amount:
-                                amount,
-
-                            description:
-                                description
-
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        alert(
-            data.message
+                body:
+                    JSON.stringify({
+                        type,
+                        amount,
+                        description
+                    })
+            }
         );
 
-        if(data.success) {
+    const data =
+        await response.json();
 
-            loadBalance();
+    alert(data.message);
 
-            document.getElementById(
-                "cashInAmount"
-            ).value = "";
+    if(data.success) {
 
-            document.getElementById(
-                "cashOutAmount"
-            ).value = "";
+        loadBalance();
 
-            document.getElementById(
-                "cashInDescription"
-            ).value = "";
+        document.getElementById(
+            "cashInAmount"
+        ).value = "";
 
-            document.getElementById(
-                "cashOutDescription"
-            ).value = "";
+        document.getElementById(
+            "cashOutAmount"
+        ).value = "";
 
-        }
+        document.getElementById(
+            "cashInDescription"
+        ).value = "";
 
-    }
-
-    catch(error) {
-
-        alert(
-            "Server error. Please try again."
-        );
-
-        console.log(error);
+        document.getElementById(
+            "cashOutDescription"
+        ).value = "";
 
     }
 }
@@ -1410,13 +1133,8 @@ loadBalance();
 </body>
 
 </html>
-
 """
 
-
-# =========================================================
-# CASH PAGE ROUTE
-# =========================================================
 
 @app.route("/cash")
 def cash_page():
@@ -1454,7 +1172,7 @@ def cash_transaction():
 
     transaction_type = str(
         data.get("type", "")
-    ).strip().upper()
+    ).upper().strip()
 
     description = str(
         data.get("description", "")
@@ -1477,9 +1195,7 @@ def cash_transaction():
 
         return jsonify(
             success=False,
-            message=(
-                "Amount must be greater than zero."
-            )
+            message="Amount must be greater than zero."
         ), 400
 
     if transaction_type not in [
@@ -1502,47 +1218,34 @@ def cash_transaction():
             WHERE id = 1
         """).fetchone()
 
-        current_cash = float(
-            row["balance"]
-        )
+        before = float(row["balance"])
 
         if (
             transaction_type == "CASH OUT"
-            and
-            amount > current_cash
+            and amount > before
         ):
 
             conn.close()
 
             return jsonify(
                 success=False,
-                message=(
-                    f"Not enough cash. "
-                    f"Available: "
-                    f"{current_cash:,.2f}"
-                )
+                message=f"Not enough cash. Available: {before:,.2f} Frw."
             ), 400
 
         if transaction_type == "CASH IN":
 
-            new_cash = (
-                current_cash +
-                amount
-            )
+            after = before + amount
 
         else:
 
-            new_cash = (
-                current_cash -
-                amount
-            )
+            after = before - amount
 
         conn.execute("""
             UPDATE cash_account
             SET balance = ?
             WHERE id = 1
         """, (
-            new_cash,
+            after,
         ))
 
         conn.execute("""
@@ -1559,8 +1262,8 @@ def cash_transaction():
         """, (
             transaction_type,
             amount,
-            current_cash,
-            new_cash,
+            before,
+            after,
             session["username"],
             description
         ))
@@ -1570,7 +1273,6 @@ def cash_transaction():
     except Exception as error:
 
         conn.rollback()
-
         conn.close()
 
         print(error)
@@ -1586,8 +1288,7 @@ def cash_transaction():
         success=True,
         message=(
             f"{transaction_type} successful. "
-            f"New cash balance: "
-            f"{new_cash:,.2f}"
+            f"New balance: {after:,.2f} Frw"
         )
     )
 
@@ -1597,7 +1298,6 @@ def cash_transaction():
 # =========================================================
 
 PRODUCTS_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -1665,11 +1365,13 @@ button {
 .edit {
     background: #2563eb;
     color: white;
-    margin-right: 5px;
+    margin: 3px;
 }
 
-.back {
-    text-decoration: none;
+.stockedit {
+    background: #7c3aed;
+    color: white;
+    margin: 3px;
 }
 
 table {
@@ -1699,6 +1401,7 @@ th {
     .table-box {
         overflow-x: auto;
     }
+
 }
 
 </style>
@@ -1709,12 +1412,8 @@ th {
 
 <div class="container">
 
-<a
-class="back"
-href="/dashboard">
-
+<a href="/dashboard">
 ← Dashboard
-
 </a>
 
 <h1>
@@ -1768,11 +1467,8 @@ ADD PRODUCT
 </div>
 
 <p>
-
-💡 Initial stock does NOT require
-Cash In. The system will simply
-record the product and stock.
-
+💡 Initial stock is recorded without removing
+cash. Use Stock In when buying new stock.
 </p>
 
 </div>
@@ -1786,26 +1482,18 @@ record the product and stock.
 <tr>
 
 <th>ID</th>
-
 <th>Product</th>
-
 <th>Stock</th>
-
 <th>Purchase Price</th>
-
 <th>Selling Price</th>
-
 <th>Profit / Unit</th>
-
-<th>Action</th>
+<th>Actions</th>
 
 </tr>
 
 </thead>
 
-<tbody
-id="products">
-
+<tbody id="products">
 </tbody>
 
 </table>
@@ -1818,114 +1506,91 @@ id="products">
 
 async function loadProducts() {
 
-    try {
+    const response =
+        await fetch("/api/products");
 
-        const response =
-            await fetch(
-                "/api/products"
-            );
+    const data =
+        await response.json();
 
-        const data =
-            await response.json();
+    const table =
+        document.getElementById(
+            "products"
+        );
 
-        const table =
-            document.getElementById(
-                "products"
-            );
+    table.innerHTML = "";
 
-        table.innerHTML = "";
+    if(!data.success) {
 
-        if(!data.success) {
+        alert(data.message);
+        return;
 
-            alert(
-                data.message
-            );
+    }
 
-            return;
+    data.products.forEach(
+        p => {
+
+            const profit =
+                Number(p.selling_price)
+                -
+                Number(p.purchase_price);
+
+            table.innerHTML += `
+
+            <tr>
+
+            <td>${p.id}</td>
+
+            <td>${p.name}</td>
+
+            <td>${p.quantity}</td>
+
+            <td>
+            ${Number(
+                p.purchase_price
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${Number(
+                p.selling_price
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${profit.toLocaleString()}
+            </td>
+
+            <td>
+
+            <button
+            class="edit"
+            onclick="editProduct(${p.id})">
+            EDIT PRICE
+            </button>
+
+            <button
+            class="stockedit"
+            onclick="editStock(${p.id}, ${p.quantity})">
+            EDIT STOCK
+            </button>
+
+            <button
+            class="delete"
+            onclick="deleteProduct(${p.id})">
+            DELETE
+            </button>
+
+            </td>
+
+            </tr>
+
+            `;
+
         }
+    );
 
-        data.products.forEach(
-            p => {
-
-                const profit =
-                    Number(
-                        p.selling_price
-                    )
-                    -
-                    Number(
-                        p.purchase_price
-                    );
-
-                table.innerHTML += `
-
-                <tr>
-
-                <td>
-                ${p.id}
-                </td>
-
-                <td>
-                ${p.name}
-                </td>
-
-                <td>
-                ${p.quantity}
-                </td>
-
-                <td>
-                ${Number(
-                    p.purchase_price
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${Number(
-                    p.selling_price
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${profit.toLocaleString()}
-                </td>
-
-                <td>
-
-                <button
-                class="edit"
-                onclick="editProduct(${p.id})">
-
-                EDIT
-
-                </button>
-
-                <button
-                class="delete"
-                onclick="deleteProduct(${p.id})">
-
-                DELETE
-
-                </button>
-
-                </td>
-
-                </tr>
-
-                `;
-            }
-        );
-
-    }
-
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Could not load products."
-        );
-
-    }
 }
+
 
 async function addProduct() {
 
@@ -1964,204 +1629,210 @@ async function addProduct() {
         return;
     }
 
-    if(quantity < 0) {
+    if(
+        quantity < 0 ||
+        purchase < 0 ||
+        selling < 0
+    ) {
 
         alert(
-            "Quantity cannot be negative."
+            "Values cannot be negative."
         );
 
         return;
     }
 
-    if(purchase < 0) {
+    const response =
+        await fetch(
+            "/api/products",
+            {
 
-        alert(
-            "Purchase price cannot be negative."
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        name,
+                        quantity,
+                        purchase_price:
+                            purchase,
+                        selling_price:
+                            selling
+
+                    })
+            }
         );
 
-        return;
-    }
+    const data =
+        await response.json();
 
-    if(selling < 0) {
+    alert(data.message);
 
-        alert(
-            "Selling price cannot be negative."
-        );
+    if(data.success) {
 
-        return;
-    }
+        document.getElementById(
+            "name"
+        ).value = "";
 
-    try {
+        document.getElementById(
+            "quantity"
+        ).value = "";
 
-        const response =
-            await fetch(
-                "/api/products",
-                {
+        document.getElementById(
+            "purchase"
+        ).value = "";
 
-                    method:
-                        "POST",
+        document.getElementById(
+            "selling"
+        ).value = "";
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            name:
-                                name,
-
-                            quantity:
-                                quantity,
-
-                            purchase_price:
-                                purchase,
-
-                            selling_price:
-                                selling
-
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        alert(
-            data.message
-        );
-
-        if(data.success) {
-
-            document.getElementById(
-                "name"
-            ).value = "";
-
-            document.getElementById(
-                "quantity"
-            ).value = "";
-
-            document.getElementById(
-                "purchase"
-            ).value = "";
-
-            document.getElementById(
-                "selling"
-            ).value = "";
-
-            loadProducts();
-
-        }
+        loadProducts();
 
     }
 
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Server error while adding product."
-        );
-
-    }
 }
+
 
 async function editProduct(id) {
 
-    const newName =
+    const name =
         prompt(
-            "Enter new product name:"
+            "New product name:"
         );
 
     if(
-        newName === null ||
-        !newName.trim()
+        name === null ||
+        !name.trim()
+    ) return;
+
+    const purchase =
+        prompt(
+            "New purchase price:"
+        );
+
+    if(purchase === null) return;
+
+    const selling =
+        prompt(
+            "New selling price:"
+        );
+
+    if(selling === null) return;
+
+    const response =
+        await fetch(
+            "/api/products/" + id,
+            {
+
+                method: "PUT",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        name:
+                            name.trim(),
+
+                        purchase_price:
+                            Number(purchase),
+
+                        selling_price:
+                            Number(selling)
+
+                    })
+            }
+        );
+
+    const data =
+        await response.json();
+
+    alert(data.message);
+
+    if(data.success)
+        loadProducts();
+
+}
+
+
+async function editStock(
+    id,
+    currentQuantity
+) {
+
+    const newQuantity =
+        prompt(
+            `Current stock: ${currentQuantity}
+
+Enter the CORRECT total stock quantity:`
+        );
+
+    if(newQuantity === null)
+        return;
+
+    const quantity =
+        Number(newQuantity);
+
+    if(
+        !Number.isInteger(quantity) ||
+        quantity < 0
     ) {
 
-        return;
-    }
-
-    const newPurchase =
-        prompt(
-            "Enter new purchase price:"
-        );
-
-    if(newPurchase === null) {
-
-        return;
-    }
-
-    const newSelling =
-        prompt(
-            "Enter new selling price:"
-        );
-
-    if(newSelling === null) {
-
-        return;
-    }
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/products/" + id,
-                {
-
-                    method:
-                        "PUT",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            name:
-                                newName.trim(),
-
-                            purchase_price:
-                                Number(
-                                    newPurchase
-                                ),
-
-                            selling_price:
-                                Number(
-                                    newSelling
-                                )
-
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
         alert(
-            data.message
+            "Enter a valid whole number."
         );
 
-        if(data.success) {
-
-            loadProducts();
-
-        }
-
+        return;
     }
 
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Could not update product."
+    const reason =
+        prompt(
+            "Reason for stock correction:"
         );
 
-    }
+    if(reason === null)
+        return;
+
+    const response =
+        await fetch(
+            "/api/products/" + id + "/stock",
+            {
+
+                method: "PUT",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        quantity,
+                        reason
+
+                    })
+            }
+        );
+
+    const data =
+        await response.json();
+
+    alert(data.message);
+
+    if(data.success)
+        loadProducts();
+
 }
+
 
 async function deleteProduct(id) {
 
@@ -2169,47 +1840,26 @@ async function deleteProduct(id) {
         !confirm(
             "Delete this product?"
         )
-    ) {
+    ) return;
 
-        return;
-    }
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/products/" + id,
-                {
-                    method:
-                        "DELETE"
-                }
-            );
-
-        const data =
-            await response.json();
-
-        alert(
-            data.message
+    const response =
+        await fetch(
+            "/api/products/" + id,
+            {
+                method: "DELETE"
+            }
         );
 
-        if(data.success) {
+    const data =
+        await response.json();
 
-            loadProducts();
+    alert(data.message);
 
-        }
+    if(data.success)
+        loadProducts();
 
-    }
-
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Could not delete product."
-        );
-
-    }
 }
+
 
 loadProducts();
 
@@ -2218,13 +1868,8 @@ loadProducts();
 </body>
 
 </html>
-
 """
 
-
-# =========================================================
-# PRODUCTS PAGE ROUTE
-# =========================================================
 
 @app.route("/products")
 def products_page():
@@ -2249,13 +1894,7 @@ def get_products():
     conn = get_db()
 
     products = conn.execute("""
-        SELECT
-            id,
-            name,
-            quantity,
-            purchase_price,
-            selling_price,
-            created_at
+        SELECT *
         FROM products
         ORDER BY id DESC
     """).fetchall()
@@ -2300,20 +1939,17 @@ def add_product():
     try:
 
         quantity = int(
-            data.get(
-                "quantity",
-                0
-            )
+            data.get("quantity", 0)
         )
 
-        purchase_price = float(
+        purchase = float(
             data.get(
                 "purchase_price",
                 0
             )
         )
 
-        selling_price = float(
+        selling = float(
             data.get(
                 "selling_price",
                 0
@@ -2338,27 +1974,14 @@ def add_product():
 
         return jsonify(
             success=False,
-            message=(
-                "Quantity cannot be negative."
-            )
+            message="Quantity cannot be negative."
         ), 400
 
-    if purchase_price < 0:
+    if purchase < 0 or selling < 0:
 
         return jsonify(
             success=False,
-            message=(
-                "Purchase price cannot be negative."
-            )
-        ), 400
-
-    if selling_price < 0:
-
-        return jsonify(
-            success=False,
-            message=(
-                "Selling price cannot be negative."
-            )
+            message="Prices cannot be negative."
         ), 400
 
     conn = get_db()
@@ -2377,8 +2000,8 @@ def add_product():
         """, (
             name,
             quantity,
-            purchase_price,
-            selling_price
+            purchase,
+            selling
         ))
 
         product_id = cursor.lastrowid
@@ -2412,26 +2035,12 @@ def add_product():
     except sqlite3.IntegrityError:
 
         conn.rollback()
-
         conn.close()
 
         return jsonify(
             success=False,
             message="Product already exists."
         ), 409
-
-    except Exception as error:
-
-        conn.rollback()
-
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Could not add product."
-        ), 500
 
     conn.close()
 
@@ -2442,7 +2051,7 @@ def add_product():
 
 
 # =========================================================
-# EDIT PRODUCT
+# EDIT PRODUCT PRICE
 # =========================================================
 
 @app.route(
@@ -2469,16 +2078,12 @@ def edit_product(product_id):
 
     try:
 
-        purchase_price = float(
-            data.get(
-                "purchase_price"
-            )
+        purchase = float(
+            data.get("purchase_price")
         )
 
-        selling_price = float(
-            data.get(
-                "selling_price"
-            )
+        selling = float(
+            data.get("selling_price")
         )
 
     except Exception:
@@ -2495,22 +2100,11 @@ def edit_product(product_id):
             message="Product name is required."
         ), 400
 
-    if purchase_price < 0:
+    if purchase < 0 or selling < 0:
 
         return jsonify(
             success=False,
-            message=(
-                "Purchase price cannot be negative."
-            )
-        ), 400
-
-    if selling_price < 0:
-
-        return jsonify(
-            success=False,
-            message=(
-                "Selling price cannot be negative."
-            )
+            message="Prices cannot be negative."
         ), 400
 
     conn = get_db()
@@ -2536,17 +2130,15 @@ def edit_product(product_id):
 
         conn.execute("""
             UPDATE products
-
             SET
                 name = ?,
                 purchase_price = ?,
                 selling_price = ?
-
             WHERE id = ?
         """, (
             name,
-            purchase_price,
-            selling_price,
+            purchase,
+            selling,
             product_id
         ))
 
@@ -2555,15 +2147,11 @@ def edit_product(product_id):
     except sqlite3.IntegrityError:
 
         conn.rollback()
-
         conn.close()
 
         return jsonify(
             success=False,
-            message=(
-                "Another product already "
-                "has that name."
-            )
+            message="Another product already has that name."
         ), 409
 
     conn.close()
@@ -2571,6 +2159,339 @@ def edit_product(product_id):
     return jsonify(
         success=True,
         message="Product updated successfully."
+    )
+
+
+# =========================================================
+# ⭐ EDIT STOCK WITH AUTOMATIC CASH CORRECTION
+# =========================================================
+
+@app.route(
+    "/api/products/<int:product_id>/stock",
+    methods=["PUT"]
+)
+@login_required
+def edit_stock(product_id):
+
+    data = request.get_json(
+        silent=True
+    )
+
+    if not data:
+
+        return jsonify(
+            success=False,
+            message="Invalid request."
+        ), 400
+
+    try:
+
+        new_quantity = int(
+            data.get("quantity")
+        )
+
+    except Exception:
+
+        return jsonify(
+            success=False,
+            message="Invalid quantity."
+        ), 400
+
+    reason = str(
+        data.get(
+            "reason",
+            "Stock correction"
+        )
+    ).strip()
+
+    if new_quantity < 0:
+
+        return jsonify(
+            success=False,
+            message="Quantity cannot be negative."
+        ), 400
+
+    conn = get_db()
+
+    try:
+
+        product = conn.execute("""
+            SELECT *
+            FROM products
+            WHERE id = ?
+        """, (
+            product_id,
+        )).fetchone()
+
+        if not product:
+
+            conn.close()
+
+            return jsonify(
+                success=False,
+                message="Product not found."
+            ), 404
+
+        old_quantity = int(
+            product["quantity"]
+        )
+
+        purchase_price = float(
+            product["purchase_price"]
+        )
+
+        difference = (
+            new_quantity -
+            old_quantity
+        )
+
+        # -------------------------------------------------
+        # NO CHANGE
+        # -------------------------------------------------
+
+        if difference == 0:
+
+            conn.close()
+
+            return jsonify(
+                success=True,
+                message="No stock change was necessary."
+            )
+
+        # -------------------------------------------------
+        # GET CASH
+        # -------------------------------------------------
+
+        cash_row = conn.execute("""
+            SELECT balance
+            FROM cash_account
+            WHERE id = 1
+        """).fetchone()
+
+        cash_before = float(
+            cash_row["balance"]
+        )
+
+        # -------------------------------------------------
+        # INCREASE STOCK
+        #
+        # Example:
+        # old = 2
+        # new = 3
+        # difference = +1
+        #
+        # Cash decreases by purchase price.
+        # -------------------------------------------------
+
+        if difference > 0:
+
+            correction_cost = (
+                difference *
+                purchase_price
+            )
+
+            if correction_cost > cash_before:
+
+                conn.close()
+
+                return jsonify(
+                    success=False,
+                    message=(
+                        f"Not enough cash for this "
+                        f"stock increase.\n\n"
+                        f"Additional stock: {difference}\n"
+                        f"Cost: {correction_cost:,.2f} Frw\n"
+                        f"Available cash: {cash_before:,.2f} Frw"
+                    )
+                ), 400
+
+            cash_after = (
+                cash_before -
+                correction_cost
+            )
+
+            description = (
+                f"Stock correction +{difference}. "
+                f"{reason}"
+            )
+
+            transaction_type = "STOCK EDIT IN"
+
+            amount = correction_cost
+
+        # -------------------------------------------------
+        # DECREASE STOCK
+        #
+        # Example:
+        # old = 3
+        # new = 2
+        # difference = -1
+        #
+        # Cash increases because the system reverses
+        # the purchase cost of the removed stock.
+        # -------------------------------------------------
+
+        else:
+
+            removed_quantity = abs(
+                difference
+            )
+
+            correction_value = (
+                removed_quantity *
+                purchase_price
+            )
+
+            cash_after = (
+                cash_before +
+                correction_value
+            )
+
+            description = (
+                f"Stock correction -{removed_quantity}. "
+                f"{reason}"
+            )
+
+            transaction_type = "STOCK EDIT OUT"
+
+            amount = correction_value
+
+        # -------------------------------------------------
+        # UPDATE STOCK
+        # -------------------------------------------------
+
+        conn.execute("""
+            UPDATE products
+            SET quantity = ?
+            WHERE id = ?
+        """, (
+            new_quantity,
+            product_id
+        ))
+
+        # -------------------------------------------------
+        # UPDATE CASH
+        # -------------------------------------------------
+
+        conn.execute("""
+            UPDATE cash_account
+            SET balance = ?
+            WHERE id = 1
+        """, (
+            cash_after,
+        ))
+
+        # -------------------------------------------------
+        # TRANSACTION
+        # -------------------------------------------------
+
+        conn.execute("""
+            INSERT INTO transactions
+            (
+                transaction_type,
+                product_id,
+                product_name,
+                quantity,
+                purchase_price,
+                selling_price,
+                amount,
+                cost_amount,
+                profit,
+                cash_before,
+                cash_after,
+                stock_before,
+                stock_after,
+                username,
+                description
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            transaction_type,
+            product_id,
+            product["name"],
+            abs(difference),
+            purchase_price,
+            product["selling_price"],
+            amount,
+            amount if difference > 0 else -amount,
+            0,
+            cash_before,
+            cash_after,
+            old_quantity,
+            new_quantity,
+            session["username"],
+            description
+        ))
+
+        # -------------------------------------------------
+        # HISTORY
+        # -------------------------------------------------
+
+        conn.execute("""
+            INSERT INTO history
+            (
+                product_id,
+                product_name,
+                action,
+                quantity,
+                previous_quantity,
+                new_quantity,
+                username
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            product_id,
+            product["name"],
+            transaction_type,
+            abs(difference),
+            old_quantity,
+            new_quantity,
+            session["username"]
+        ))
+
+        conn.commit()
+
+    except Exception as error:
+
+        conn.rollback()
+        conn.close()
+
+        print(error)
+
+        return jsonify(
+            success=False,
+            message="Stock correction failed. No changes were saved."
+        ), 500
+
+    conn.close()
+
+    if difference > 0:
+
+        message = (
+            f"STOCK UPDATED!\n\n"
+            f"Product: {product['name']}\n"
+            f"Old stock: {old_quantity}\n"
+            f"New stock: {new_quantity}\n"
+            f"Added: {difference}\n"
+            f"Cost: {amount:,.2f} Frw\n"
+            f"Cash remaining: {cash_after:,.2f} Frw"
+        )
+
+    else:
+
+        message = (
+            f"STOCK UPDATED!\n\n"
+            f"Product: {product['name']}\n"
+            f"Old stock: {old_quantity}\n"
+            f"New stock: {new_quantity}\n"
+            f"Removed: {abs(difference)}\n"
+            f"Cash returned: {amount:,.2f} Frw\n"
+            f"New cash: {cash_after:,.2f} Frw"
+        )
+
+    return jsonify(
+        success=True,
+        message=message
     )
 
 
@@ -2624,7 +2545,6 @@ def delete_product(product_id):
     ))
 
     conn.commit()
-
     conn.close()
 
     return jsonify(
@@ -2638,7 +2558,6 @@ def delete_product(product_id):
 # =========================================================
 
 STOCK_IN_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -2691,10 +2610,6 @@ button {
     cursor: pointer;
 }
 
-a {
-    text-decoration: none;
-}
-
 .info {
     background: #eff6ff;
     padding: 15px;
@@ -2723,24 +2638,20 @@ a {
 <div class="info">
 
 <strong>
-How it works:
+Stock In Calculation
 </strong>
 
 <br><br>
 
-Stock In adds quantity to the existing
-stock.
-
-<br>
-
-The system calculates the purchase
-cost automatically.
+The system automatically calculates:
 
 <br><br>
 
-Example:
+Quantity × Purchase Price
 
-2 bags × 1,000 Frw = 2,000 Frw cost.
+<br><br>
+
+The cost is removed from Cash Balance.
 
 </div>
 
@@ -2782,57 +2693,42 @@ ADD STOCK
 
 async function loadProducts() {
 
-    try {
+    const response =
+        await fetch("/api/products");
 
-        const response =
-            await fetch(
-                "/api/products"
-            );
+    const data =
+        await response.json();
 
-        const data =
-            await response.json();
-
-        const select =
-            document.getElementById(
-                "product"
-            );
-
-        select.innerHTML =
-            '<option value="">Select product</option>';
-
-        data.products.forEach(
-            p => {
-
-                select.innerHTML += `
-
-                <option value="${p.id}">
-
-                ${p.name}
-                — Current: ${p.quantity}
-                — Buy:
-                ${Number(
-                    p.purchase_price
-                ).toLocaleString()}
-
-                </option>
-
-                `;
-
-            }
+    const select =
+        document.getElementById(
+            "product"
         );
 
-    }
+    select.innerHTML =
+        '<option value="">Select product</option>';
 
-    catch(error) {
+    data.products.forEach(
+        p => {
 
-        console.log(error);
+            select.innerHTML += `
 
-        alert(
-            "Could not load products."
-        );
+            <option value="${p.id}">
 
-    }
+            ${p.name}
+            — Stock: ${p.quantity}
+            — Buy:
+            ${Number(
+                p.purchase_price
+            ).toLocaleString()}
+
+            </option>
+
+            `;
+
+        }
+    );
 }
+
 
 async function stockIn() {
 
@@ -2860,65 +2756,46 @@ async function stockIn() {
         return;
     }
 
-    try {
+    const response =
+        await fetch(
+            "/api/stock-in",
+            {
 
-        const response =
-            await fetch(
-                "/api/stock-in",
-                {
+                method: "POST",
 
-                    method:
-                        "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
+                body:
+                    JSON.stringify({
 
-                    body:
-                        JSON.stringify({
+                        product_id:
+                            Number(productId),
 
-                            product_id:
-                                Number(
-                                    productId
-                                ),
+                        quantity
 
-                            quantity:
-                                quantity
-
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        alert(
-            data.message
+                    })
+            }
         );
 
-        if(data.success) {
+    const data =
+        await response.json();
 
-            document.getElementById(
-                "quantity"
-            ).value = "";
+    alert(data.message);
 
-            loadProducts();
+    if(data.success) {
 
-        }
+        document.getElementById(
+            "quantity"
+        ).value = "";
 
-    }
-
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Server error during Stock In."
-        );
+        loadProducts();
 
     }
 }
+
 
 loadProducts();
 
@@ -2927,7 +2804,6 @@ loadProducts();
 </body>
 
 </html>
-
 """
 
 
@@ -2944,7 +2820,7 @@ def stock_in_page():
 
 
 # =========================================================
-# STOCK IN API
+# ⭐ STOCK IN API WITH AVERAGE PURCHASE PRICE
 # =========================================================
 
 @app.route(
@@ -2979,19 +2855,14 @@ def stock_in():
 
         return jsonify(
             success=False,
-            message=(
-                "Invalid product or quantity."
-            )
+            message="Invalid product or quantity."
         ), 400
 
     if quantity <= 0:
 
         return jsonify(
             success=False,
-            message=(
-                "Quantity must be greater "
-                "than zero."
-            )
+            message="Quantity must be greater than zero."
         ), 400
 
     conn = get_db()
@@ -3019,13 +2890,38 @@ def stock_in():
             product["quantity"]
         )
 
-        purchase_price = float(
+        old_purchase_price = float(
             product["purchase_price"]
         )
 
+        selling_price = float(
+            product["selling_price"]
+        )
+
+        # -------------------------------------------------
+        # USER CAN ENTER PURCHASE PRICE FOR THIS STOCK IN
+        # -------------------------------------------------
+
+        # If frontend did not send it, use current price.
+        new_purchase_price = float(
+            data.get(
+                "purchase_price",
+                old_purchase_price
+            )
+        )
+
+        if new_purchase_price < 0:
+
+            conn.close()
+
+            return jsonify(
+                success=False,
+                message="Purchase price cannot be negative."
+            ), 400
+
         cost = (
             quantity *
-            purchase_price
+            new_purchase_price
         )
 
         cash_row = conn.execute("""
@@ -3045,11 +2941,9 @@ def stock_in():
             return jsonify(
                 success=False,
                 message=(
-                    f"Not enough cash. "
-                    f"You need "
-                    f"{cost:,.2f} Frw "
-                    f"but available cash is "
-                    f"{cash_before:,.2f} Frw. "
+                    f"Not enough cash.\n\n"
+                    f"Stock cost: {cost:,.2f} Frw\n"
+                    f"Available cash: {cash_before:,.2f} Frw\n\n"
                     f"Use Cash In first."
                 )
             ), 400
@@ -3064,14 +2958,50 @@ def stock_in():
             cost
         )
 
+        # -------------------------------------------------
+        # AVERAGE PURCHASE PRICE
+        # -------------------------------------------------
+
+        if new_stock > 0:
+
+            total_old_value = (
+                old_stock *
+                old_purchase_price
+            )
+
+            total_new_value = (
+                quantity *
+                new_purchase_price
+            )
+
+            average_price = (
+                total_old_value +
+                total_new_value
+            ) / new_stock
+
+        else:
+
+            average_price = new_purchase_price
+
+        # -------------------------------------------------
+        # UPDATE PRODUCT
+        # -------------------------------------------------
+
         conn.execute("""
             UPDATE products
-            SET quantity = ?
+            SET
+                quantity = ?,
+                purchase_price = ?
             WHERE id = ?
         """, (
             new_stock,
+            average_price,
             product_id
         ))
+
+        # -------------------------------------------------
+        # UPDATE CASH
+        # -------------------------------------------------
 
         conn.execute("""
             UPDATE cash_account
@@ -3080,6 +3010,10 @@ def stock_in():
         """, (
             cash_after,
         ))
+
+        # -------------------------------------------------
+        # TRANSACTION
+        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO transactions
@@ -3100,16 +3034,14 @@ def stock_in():
                 username,
                 description
             )
-
-            VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "STOCK IN",
             product_id,
             product["name"],
             quantity,
-            purchase_price,
-            product["selling_price"],
+            new_purchase_price,
+            selling_price,
             cost,
             cost,
             0,
@@ -3118,8 +3050,17 @@ def stock_in():
             old_stock,
             new_stock,
             session["username"],
-            "Stock purchased"
+            (
+                f"Stock purchased at "
+                f"{new_purchase_price:,.2f} Frw/unit. "
+                f"Average cost now "
+                f"{average_price:,.2f} Frw/unit."
+            )
         ))
+
+        # -------------------------------------------------
+        # HISTORY
+        # -------------------------------------------------
 
         conn.execute("""
             INSERT INTO history
@@ -3132,9 +3073,7 @@ def stock_in():
                 new_quantity,
                 username
             )
-
-            VALUES
-            (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             product_id,
             product["name"],
@@ -3150,17 +3089,13 @@ def stock_in():
     except Exception as error:
 
         conn.rollback()
-
         conn.close()
 
         print(error)
 
         return jsonify(
             success=False,
-            message=(
-                "Stock In failed. "
-                "No changes were saved."
-            )
+            message="Stock In failed. No changes were saved."
         ), 500
 
     conn.close()
@@ -3168,14 +3103,15 @@ def stock_in():
     return jsonify(
         success=True,
         message=(
-            f"Stock In successful!\n"
-            f"{quantity} × "
-            f"{product['name']} added.\n"
-            f"Purchase cost: "
-            f"{cost:,.2f} Frw\n"
+            f"STOCK IN SUCCESSFUL!\n\n"
+            f"Product: {product['name']}\n"
+            f"Added: {quantity}\n"
+            f"Purchase price: {new_purchase_price:,.2f} Frw\n"
+            f"Purchase cost: {cost:,.2f} Frw\n"
             f"New stock: {new_stock}\n"
-            f"Cash remaining: "
-            f"{cash_after:,.2f} Frw"
+            f"Average purchase price: "
+            f"{average_price:,.2f} Frw\n"
+            f"Cash remaining: {cash_after:,.2f} Frw"
         )
     )
 
@@ -3185,7 +3121,6 @@ def stock_in():
 # =========================================================
 
 STOCK_OUT_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -3238,15 +3173,11 @@ button {
     cursor: pointer;
 }
 
-a {
-    text-decoration: none;
-}
-
-.result {
+.info {
     background: #f0fdf4;
     padding: 15px;
     border-radius: 10px;
-    margin-top: 20px;
+    margin-bottom: 20px;
 }
 
 </style>
@@ -3266,6 +3197,30 @@ a {
 </h1>
 
 <div class="box">
+
+<div class="info">
+
+<strong>
+Automatic Sale Calculation
+</strong>
+
+<br><br>
+
+Sales = Quantity × Selling Price
+
+<br>
+
+Cost = Quantity × Purchase Price
+
+<br>
+
+Profit = Sales − Cost
+
+<br>
+
+Cash increases by Sales.
+
+</div>
 
 <label>
 Product
@@ -3297,13 +3252,6 @@ SELL / REMOVE STOCK
 
 </button>
 
-<div
-id="result"
-class="result"
-style="display:none">
-
-</div>
-
 </div>
 
 </div>
@@ -3312,54 +3260,42 @@ style="display:none">
 
 async function loadProducts() {
 
-    try {
+    const response =
+        await fetch("/api/products");
 
-        const response =
-            await fetch(
-                "/api/products"
-            );
+    const data =
+        await response.json();
 
-        const data =
-            await response.json();
-
-        const select =
-            document.getElementById(
-                "product"
-            );
-
-        select.innerHTML =
-            '<option value="">Select product</option>';
-
-        data.products.forEach(
-            p => {
-
-                select.innerHTML += `
-
-                <option value="${p.id}">
-
-                ${p.name}
-                — Available:
-                ${p.quantity}
-                — Sell:
-                ${Number(
-                    p.selling_price
-                ).toLocaleString()}
-
-                </option>
-
-                `;
-
-            }
+    const select =
+        document.getElementById(
+            "product"
         );
 
-    }
+    select.innerHTML =
+        '<option value="">Select product</option>';
 
-    catch(error) {
+    data.products.forEach(
+        p => {
 
-        console.log(error);
+            select.innerHTML += `
 
-    }
+            <option value="${p.id}">
+
+            ${p.name}
+            — Stock: ${p.quantity}
+            — Sell:
+            ${Number(
+                p.selling_price
+            ).toLocaleString()}
+
+            </option>
+
+            `;
+
+        }
+    );
 }
+
 
 async function stockOut() {
 
@@ -3387,65 +3323,46 @@ async function stockOut() {
         return;
     }
 
-    try {
+    const response =
+        await fetch(
+            "/api/stock-out",
+            {
 
-        const response =
-            await fetch(
-                "/api/stock-out",
-                {
+                method: "POST",
 
-                    method:
-                        "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
+                body:
+                    JSON.stringify({
 
-                    body:
-                        JSON.stringify({
+                        product_id:
+                            Number(productId),
 
-                            product_id:
-                                Number(
-                                    productId
-                                ),
+                        quantity
 
-                            quantity:
-                                quantity
-
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        alert(
-            data.message
+                    })
+            }
         );
 
-        if(data.success) {
+    const data =
+        await response.json();
 
-            document.getElementById(
-                "quantity"
-            ).value = "";
+    alert(data.message);
 
-            loadProducts();
+    if(data.success) {
 
-        }
+        document.getElementById(
+            "quantity"
+        ).value = "";
 
-    }
-
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Server error during sale."
-        );
+        loadProducts();
 
     }
 }
+
 
 loadProducts();
 
@@ -3454,7 +3371,6 @@ loadProducts();
 </body>
 
 </html>
-
 """
 
 
@@ -3506,19 +3422,14 @@ def stock_out():
 
         return jsonify(
             success=False,
-            message=(
-                "Invalid product or quantity."
-            )
+            message="Invalid product or quantity."
         ), 400
 
     if quantity <= 0:
 
         return jsonify(
             success=False,
-            message=(
-                "Quantity must be greater "
-                "than zero."
-            )
+            message="Quantity must be greater than zero."
         ), 400
 
     conn = get_db()
@@ -3554,8 +3465,7 @@ def stock_out():
                 success=False,
                 message=(
                     f"Not enough stock. "
-                    f"Available: "
-                    f"{old_stock}."
+                    f"Available: {old_stock}."
                 )
             ), 400
 
@@ -3638,9 +3548,7 @@ def stock_out():
                 username,
                 description
             )
-
-            VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "STOCK OUT",
             product_id,
@@ -3670,9 +3578,7 @@ def stock_out():
                 new_quantity,
                 username
             )
-
-            VALUES
-            (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             product_id,
             product["name"],
@@ -3688,17 +3594,13 @@ def stock_out():
     except Exception as error:
 
         conn.rollback()
-
         conn.close()
 
         print(error)
 
         return jsonify(
             success=False,
-            message=(
-                "Sale failed. "
-                "No changes were saved."
-            )
+            message="Sale failed. No changes were saved."
         ), 500
 
     conn.close()
@@ -3707,29 +3609,22 @@ def stock_out():
         success=True,
         message=(
             f"SALE SUCCESSFUL!\n\n"
-            f"Product: "
-            f"{product['name']}\n"
+            f"Product: {product['name']}\n"
             f"Quantity sold: {quantity}\n"
-            f"Sales: "
-            f"{sales_amount:,.2f} Frw\n"
-            f"Cost: "
-            f"{cost_amount:,.2f} Frw\n"
-            f"PROFIT: "
-            f"{profit:,.2f} Frw\n"
-            f"Remaining stock: "
-            f"{new_stock}\n"
-            f"New cash: "
-            f"{cash_after:,.2f} Frw"
+            f"Sales: {sales_amount:,.2f} Frw\n"
+            f"Cost: {cost_amount:,.2f} Frw\n"
+            f"PROFIT: {profit:,.2f} Frw\n"
+            f"Remaining stock: {new_stock}\n"
+            f"New cash: {cash_after:,.2f} Frw"
         )
     )
 
 
 # =========================================================
-# TRANSACTION HISTORY PAGE
+# HISTORY PAGE
 # =========================================================
 
 HISTORY_HTML = """
-
 <!DOCTYPE html>
 
 <html>
@@ -3794,10 +3689,6 @@ th {
     font-weight: bold;
 }
 
-a {
-    text-decoration: none;
-}
-
 </style>
 
 </head>
@@ -3823,35 +3714,20 @@ a {
 <tr>
 
 <th>ID</th>
-
 <th>Type</th>
-
 <th>Product</th>
-
 <th>Qty</th>
-
 <th>Purchase</th>
-
 <th>Selling</th>
-
 <th>Amount</th>
-
 <th>Cost</th>
-
 <th>Profit</th>
-
 <th>Stock Before</th>
-
 <th>Stock After</th>
-
 <th>Cash Before</th>
-
 <th>Cash After</th>
-
 <th>User</th>
-
 <th>Description</th>
-
 <th>Date</th>
 
 </tr>
@@ -3871,149 +3747,132 @@ a {
 
 async function loadHistory() {
 
-    try {
+    const response =
+        await fetch(
+            "/api/transactions"
+        );
 
-        const response =
-            await fetch(
-                "/api/transactions"
-            );
+    const data =
+        await response.json();
 
-        const data =
-            await response.json();
+    const table =
+        document.getElementById(
+            "history"
+        );
 
-        const table =
-            document.getElementById(
-                "history"
-            );
+    table.innerHTML = "";
 
-        table.innerHTML = "";
+    if(!data.success) {
 
-        if(!data.success) {
+        alert(data.message);
+        return;
 
-            alert(
-                data.message
-            );
+    }
 
-            return;
+    data.transactions.forEach(
+        t => {
+
+            const typeClass =
+                (
+                    t.transaction_type === "STOCK IN"
+                    ||
+                    t.transaction_type === "STOCK EDIT IN"
+                    ||
+                    t.transaction_type === "CASH IN"
+                )
+                ?
+                "in"
+                :
+                "out";
+
+            table.innerHTML += `
+
+            <tr>
+
+            <td>${t.id}</td>
+
+            <td class="${typeClass}">
+            ${t.transaction_type}
+            </td>
+
+            <td>
+            ${t.product_name || "-"}
+            </td>
+
+            <td>
+            ${t.quantity || "-"}
+            </td>
+
+            <td>
+            ${Number(
+                t.purchase_price || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${Number(
+                t.selling_price || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${Number(
+                t.amount || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${Number(
+                t.cost_amount || 0
+            ).toLocaleString()}
+            </td>
+
+            <td class="profit">
+            ${Number(
+                t.profit || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${t.stock_before || 0}
+            </td>
+
+            <td>
+            ${t.stock_after || 0}
+            </td>
+
+            <td>
+            ${Number(
+                t.cash_before || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${Number(
+                t.cash_after || 0
+            ).toLocaleString()}
+            </td>
+
+            <td>
+            ${t.username || "-"}
+            </td>
+
+            <td>
+            ${t.description || "-"}
+            </td>
+
+            <td>
+            ${t.created_at}
+            </td>
+
+            </tr>
+
+            `;
+
         }
-
-        data.transactions.forEach(
-            t => {
-
-                const typeClass =
-                    (
-                        t.transaction_type ===
-                        "STOCK IN"
-                        ||
-                        t.transaction_type ===
-                        "CASH IN"
-                    )
-                    ?
-                    "in"
-                    :
-                    "out";
-
-                table.innerHTML += `
-
-                <tr>
-
-                <td>
-                ${t.id}
-                </td>
-
-                <td class="${typeClass}">
-                ${t.transaction_type}
-                </td>
-
-                <td>
-                ${t.product_name || "-"}
-                </td>
-
-                <td>
-                ${t.quantity || "-"}
-                </td>
-
-                <td>
-                ${Number(
-                    t.purchase_price || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${Number(
-                    t.selling_price || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${Number(
-                    t.amount || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${Number(
-                    t.cost_amount || 0
-                ).toLocaleString()}
-                </td>
-
-                <td class="profit">
-                ${Number(
-                    t.profit || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${t.stock_before || 0}
-                </td>
-
-                <td>
-                ${t.stock_after || 0}
-                </td>
-
-                <td>
-                ${Number(
-                    t.cash_before || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${Number(
-                    t.cash_after || 0
-                ).toLocaleString()}
-                </td>
-
-                <td>
-                ${t.username}
-                </td>
-
-                <td>
-                ${t.description || "-"}
-                </td>
-
-                <td>
-                ${t.created_at}
-                </td>
-
-                </tr>
-
-                `;
-
-            }
-        );
-
-    }
-
-    catch(error) {
-
-        console.log(error);
-
-        alert(
-            "Could not load history."
-        );
-
-    }
+    );
 }
+
 
 loadHistory();
 
@@ -4022,7 +3881,6 @@ loadHistory();
 </body>
 
 </html>
-
 """
 
 
@@ -4039,7 +3897,7 @@ def history_page():
 
 
 # =========================================================
-# TRANSACTION API
+# TRANSACTIONS API
 # =========================================================
 
 @app.route("/api/transactions")
@@ -4066,7 +3924,7 @@ def get_transactions():
 
 
 # =========================================================
-# OLD STOCK HISTORY API
+# OLD HISTORY API
 # =========================================================
 
 @app.route("/api/history")
@@ -4093,7 +3951,7 @@ def get_history():
 
 
 # =========================================================
-# CREATE DEFAULT ADMIN
+# DEFAULT ADMIN
 # =========================================================
 
 def create_default_admin():
@@ -4108,10 +3966,6 @@ def create_default_admin():
 
     if not user:
 
-        password_hash = generate_password_hash(
-            "admin123"
-        )
-
         conn.execute("""
             INSERT INTO users
             (
@@ -4122,7 +3976,9 @@ def create_default_admin():
             VALUES (?, ?, ?)
         """, (
             "admin",
-            password_hash,
+            generate_password_hash(
+                "admin123"
+            ),
             "admin"
         ))
 
@@ -4172,7 +4028,7 @@ if __name__ == "__main__":
     print()
 
     app.run(
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=5000,
         debug=True
     )
