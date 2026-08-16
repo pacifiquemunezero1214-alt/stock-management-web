@@ -1,815 +1,875 @@
-from flask import (
-    Flask,
-    request,
-    jsonify,
-    send_from_directory,
-    session,
-    redirect,
-    render_template_string
-)
-
-import sqlite3
-from functools import wraps
+from flask import Flask, request, jsonify, session, redirect, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
-
-
-# =========================================================
-# CONFIGURATION
-# =========================================================
+from functools import wraps
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-app.secret_key = "CHANGE-THIS-STOCK-SECRET-KEY"
+app.secret_key = os.getenv(
+    "SECRET_KEY",
+    "CHANGE-THIS-STOCK-SECRET-KEY"
+)
 
-DATABASE = "stock.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
-# =========================================================
-# DATABASE CONNECTION
-# =========================================================
+# ============================================================
+# DATABASE
+# ============================================================
 
 def get_db():
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Set your PostgreSQL connection string first."
+        )
 
-    conn = sqlite3.connect(
-        DATABASE,
-        timeout=30
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=RealDictCursor
     )
 
-    conn.row_factory = sqlite3.Row
-
-    conn.execute(
-        "PRAGMA foreign_keys = ON"
-    )
-
-    return conn
-
-
-# =========================================================
-# DATABASE INITIALIZATION
-# =========================================================
 
 def init_database():
-
     conn = get_db()
 
-    # -----------------------------------------------------
-    # USERS
-    # -----------------------------------------------------
+    try:
+        with conn.cursor() as cur:
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            # USERS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'user',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # PRODUCTS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0
+                        CHECK (quantity >= 0),
+                    purchase_price NUMERIC(14,2) NOT NULL DEFAULT 0
+                        CHECK (purchase_price >= 0),
+                    selling_price NUMERIC(14,2) NOT NULL DEFAULT 0
+                        CHECK (selling_price >= 0),
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(owner_id, name)
+                )
+            """)
+
+            # CASH
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cash_account (
+                    id SERIAL PRIMARY KEY,
+                    balance NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    owner_id INTEGER UNIQUE NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
+            # TRANSACTIONS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id SERIAL PRIMARY KEY,
+                    transaction_type VARCHAR(50) NOT NULL,
+                    product_id INTEGER
+                        REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200),
+                    quantity INTEGER,
+                    purchase_price NUMERIC(14,2) DEFAULT 0,
+                    selling_price NUMERIC(14,2) DEFAULT 0,
+                    amount NUMERIC(16,2) DEFAULT 0,
+                    cost_amount NUMERIC(16,2) DEFAULT 0,
+                    profit NUMERIC(16,2) DEFAULT 0,
+                    cash_before NUMERIC(16,2) DEFAULT 0,
+                    cash_after NUMERIC(16,2) DEFAULT 0,
+                    stock_before INTEGER,
+                    stock_after INTEGER,
+                    username VARCHAR(100),
+                    description TEXT,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # HISTORY
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id SERIAL PRIMARY KEY,
+                    product_id INTEGER
+                        REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200) NOT NULL,
+                    action VARCHAR(50) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    previous_quantity INTEGER NOT NULL DEFAULT 0,
+                    new_quantity INTEGER NOT NULL DEFAULT 0,
+                    username VARCHAR(100) NOT NULL,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+        conn.commit()
+        create_default_admin(conn)
+
+    finally:
+        conn.close()
+
+
+def create_default_admin(conn):
+
+    with conn.cursor() as cur:
+
+        cur.execute(
+            "SELECT id FROM users WHERE username=%s",
+            ("admin",)
         )
-    """)
 
-    # -----------------------------------------------------
-    # PRODUCTS
-    # -----------------------------------------------------
+        row = cur.fetchone()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            quantity INTEGER NOT NULL DEFAULT 0,
-            purchase_price REAL NOT NULL DEFAULT 0,
-            selling_price REAL NOT NULL DEFAULT 0,
-            owner_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        if row:
+            admin_id = row["id"]
 
-    # -----------------------------------------------------
-    # CASH ACCOUNT
-    # -----------------------------------------------------
+            cur.execute(
+                "UPDATE users SET role='admin' WHERE id=%s",
+                (admin_id,)
+            )
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cash_account (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            balance REAL NOT NULL DEFAULT 0,
-            owner_id INTEGER
-        )
-    """)
+        else:
 
-    # -----------------------------------------------------
-    # TRANSACTIONS
-    # -----------------------------------------------------
+            cur.execute("""
+                INSERT INTO users(username, password, role)
+                VALUES(%s, %s, 'admin')
+                RETURNING id
+            """, (
+                "admin",
+                generate_password_hash("admin123")
+            ))
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id = cur.fetchone()["id"]
 
-            transaction_type TEXT NOT NULL,
-
-            product_id INTEGER,
-            product_name TEXT,
-
-            quantity INTEGER DEFAULT 0,
-
-            purchase_price REAL DEFAULT 0,
-            selling_price REAL DEFAULT 0,
-
-            amount REAL DEFAULT 0,
-            cost_amount REAL DEFAULT 0,
-            profit REAL DEFAULT 0,
-
-            cash_before REAL DEFAULT 0,
-            cash_after REAL DEFAULT 0,
-
-            stock_before INTEGER DEFAULT 0,
-            stock_after INTEGER DEFAULT 0,
-
-            username TEXT,
-
-            description TEXT,
-
-            owner_id INTEGER,
-
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # -----------------------------------------------------
-    # HISTORY
-    # -----------------------------------------------------
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            product_id INTEGER,
-
-            product_name TEXT NOT NULL,
-
-            action TEXT NOT NULL,
-
-            quantity INTEGER NOT NULL,
-
-            previous_quantity INTEGER NOT NULL,
-
-            new_quantity INTEGER NOT NULL,
-
-            username TEXT NOT NULL,
-
-            owner_id INTEGER,
-
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cur.execute("""
+            INSERT INTO cash_account(balance, owner_id)
+            VALUES(0, %s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (admin_id,))
 
     conn.commit()
 
-    # =====================================================
-    # MIGRATION FOR OLD DATABASE
-    # =====================================================
 
-    migrate_column(
-        conn,
-        "products",
-        "owner_id"
-    )
+def ensure_cash_account(conn, user_id):
 
-    migrate_column(
-        conn,
-        "cash_account",
-        "owner_id"
-    )
+    with conn.cursor() as cur:
 
-    migrate_column(
-        conn,
-        "transactions",
-        "owner_id"
-    )
+        cur.execute("""
+            INSERT INTO cash_account(balance, owner_id)
+            VALUES(0, %s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (user_id,))
 
-    migrate_column(
-        conn,
-        "history",
-        "owner_id"
-    )
+        cur.execute("""
+            SELECT *
+            FROM cash_account
+            WHERE owner_id=%s
+            FOR UPDATE
+        """, (user_id,))
 
-    conn.commit()
-
-    conn.close()
+        return cur.fetchone()
 
 
-# =========================================================
-# MIGRATION HELPER
-# =========================================================
-
-def migrate_column(
-    conn,
-    table_name,
-    column_name
-):
-
-    columns = conn.execute(
-        f"PRAGMA table_info({table_name})"
-    ).fetchall()
-
-    existing = [
-        column["name"]
-        for column in columns
-    ]
-
-    if column_name not in existing:
-
-        conn.execute(
-            f"""
-            ALTER TABLE {table_name}
-            ADD COLUMN {column_name} INTEGER
-            """
-        )
-
-
-# =========================================================
-# LOGIN HELPERS
-# =========================================================
+# ============================================================
+# SESSION
+# ============================================================
 
 def logged_in():
-
     return "user_id" in session
 
 
 def current_user_id():
-
     return session.get("user_id")
 
 
 def current_username():
-
     return session.get("username")
 
 
-def login_required(function):
-
-    @wraps(function)
-    def wrapper(*args, **kwargs):
-
-        if not logged_in():
-
-            return jsonify(
-                success=False,
-                message="You are not logged in."
-            ), 401
-
-        return function(*args, **kwargs)
-
-    return wrapper
+def is_admin():
+    return session.get("role") == "admin"
 
 
-# =========================================================
-# ADMIN SECURITY
-# =========================================================
+def login_required(view):
 
-def admin_required(function):
-
-    @wraps(function)
-    def wrapper(*args, **kwargs):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
 
         if not logged_in():
 
+            if request.path.startswith("/api/") or request.is_json:
+                return jsonify(
+                    success=False,
+                    message="Not logged in."
+                ), 401
+
+            return redirect("/")
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(view):
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+
+        if not logged_in():
             return jsonify(
                 success=False,
-                message="You are not logged in."
+                message="Not logged in."
             ), 401
 
-        if session.get("role") != "admin":
-
+        if not is_admin():
             return jsonify(
                 success=False,
-                message="Access denied. Admin only."
+                message="Admin permission required."
             ), 403
 
-        return function(*args, **kwargs)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+# ============================================================
+# CSS
+# ============================================================
+
+BASE_CSS = """
+*{
+    box-sizing:border-box;
+}
+
+body{
+    font-family:Arial,sans-serif;
+    background:#f1f5f9;
+    color:#0f172a;
+    margin:0;
+}
+
+.nav{
+    background:#020617;
+    color:#fff;
+    padding:16px 28px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+}
+
+.brand{
+    font-size:21px;
+    font-weight:700;
+}
+
+.nav a{
+    color:#fff;
+    text-decoration:none;
+}
+
+.container{
+    max-width:1500px;
+    margin:auto;
+    padding:28px 20px;
+}
+
+.top{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:15px;
+    margin-bottom:24px;
+}
+
+.muted{
+    color:#64748b;
+}
+
+.btn{
+    display:inline-block;
+    border:0;
+    border-radius:8px;
+    padding:11px 16px;
+    background:#2563eb;
+    color:#fff;
+    text-decoration:none;
+    cursor:pointer;
+    font-weight:700;
+}
+
+.btn:hover{
+    opacity:.88;
+}
+
+.green{
+    background:#16a34a;
+}
+
+.red{
+    background:#ef4444;
+}
+
+.purple{
+    background:#7c3aed;
+}
+
+.dark{
+    background:#0f172a;
+}
+
+.box,
+.card,
+.section{
+    background:#fff;
+    padding:22px;
+    border-radius:15px;
+    box-shadow:0 5px 25px rgba(0,0,0,.06);
+}
+
+.box{
+    margin-bottom:22px;
+}
+
+.cards{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+}
+
+.card .title{
+    color:#64748b;
+    font-size:13px;
+    font-weight:bold;
+}
+
+.num{
+    font-size:27px;
+    font-weight:700;
+    margin-top:10px;
+}
+
+.form-grid{
+    display:grid;
+    grid-template-columns:2fr 1fr 1fr 1fr auto;
+    gap:12px;
+}
+
+.input,
+select{
+    width:100%;
+    padding:12px;
+    border:1px solid #cbd5e1;
+    border-radius:8px;
+    font-size:15px;
+}
+
+label{
+    font-weight:700;
+    display:block;
+    margin:10px 0 7px;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    background:#fff;
+}
+
+th,
+td{
+    padding:12px;
+    border-bottom:1px solid #e2e8f0;
+    text-align:left;
+    white-space:nowrap;
+}
+
+th{
+    background:#020617;
+    color:#fff;
+}
+
+.table-wrap{
+    overflow-x:auto;
+}
+
+.profit{
+    color:#16a34a;
+    font-weight:700;
+}
+
+.loss{
+    color:#dc2626;
+    font-weight:700;
+}
+
+.menu{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:16px;
+    margin-top:25px;
+}
+
+.menu a{
+    background:#fff;
+    padding:20px;
+    border-radius:14px;
+    text-decoration:none;
+    color:#0f172a;
+    font-weight:700;
+    text-align:center;
+    box-shadow:0 5px 20px rgba(0,0,0,.06);
+}
+
+.menu a:hover{
+    background:#2563eb;
+    color:#fff;
+}
+
+.search{
+    margin-bottom:18px;
+}
+
+.auth{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+    background:linear-gradient(135deg,#020617,#2563eb);
+}
+
+.auth-box{
+    width:100%;
+    max-width:440px;
+    background:#fff;
+    padding:32px;
+    border-radius:18px;
+    box-shadow:0 15px 45px rgba(0,0,0,.2);
+}
+
+.auth-box h1{
+    text-align:center;
+}
+
+.auth-box .input{
+    margin:8px 0 12px;
+}
+
+.auth-box button{
+    width:100%;
+    margin-top:8px;
+}
+
+.message{
+    padding:10px;
+    border-radius:8px;
+    margin:10px 0;
+    display:none;
+}
+
+.small{
+    font-size:13px;
+}
+
+.warning{
+    background:#fee2e2;
+    color:#991b1b;
+    padding:16px;
+    border-radius:12px;
+    margin-bottom:20px;
+}
+
+@media(max-width:1100px){
+
+    .cards{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .menu{
+        grid-template-columns:repeat(3,1fr);
+    }
+
+    .form-grid{
+        grid-template-columns:1fr 1fr;
+    }
+}
+
+@media(max-width:650px){
+
+    .cards,
+    .menu,
+    .form-grid{
+        grid-template-columns:1fr;
+    }
+
+    .nav{
+        padding:14px;
+        flex-wrap:wrap;
+    }
+
+    .container{
+        padding:18px 12px;
+    }
+}
+"""
+
+
+# ============================================================
+# AUTH PAGE
+# ============================================================
+
+AUTH_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Management</title>
+<style>{{ css }}</style>
+</head>
+
+<body>
+
+<div class="auth">
+
+<div class="auth-box">
+
+<h1>📦 Stock Management</h1>
+
+<p class="muted" style="text-align:center">
+Login or create your account
+</p>
+
+<div id="msg" class="message"></div>
+
+<input
+    id="username"
+    class="input"
+    placeholder="Username"
+    autocomplete="username"
+>
+
+<input
+    id="password"
+    class="input"
+    type="password"
+    placeholder="Password"
+    autocomplete="current-password"
+>
+
+<button
+    type="button"
+    class="btn"
+    onclick="loginUser()"
+>
+LOGIN
+</button>
+
+<hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0">
+
+<h3>Create account</h3>
+
+<input
+    id="rusername"
+    class="input"
+    placeholder="New username"
+>
+
+<input
+    id="rpassword"
+    class="input"
+    type="password"
+    placeholder="New password"
+>
+
+<button
+    type="button"
+    class="btn green"
+    onclick="registerUser()"
+>
+REGISTER
+</button>
+
+<p class="small muted">
+Password must contain at least 4 characters.
+</p>
+
+</div>
+</div>
+
+
+<script>
+
+function showMessage(text, ok=false){
+
+    const message = document.getElementById("msg");
+
+    message.textContent = text;
+    message.style.display = "block";
+
+    if(ok){
+
+        message.style.background = "#dcfce7";
+        message.style.color = "#166534";
+
+    }else{
+
+        message.style.background = "#fee2e2";
+        message.style.color = "#991b1b";
 
-    return wrapper
+    }
+}
 
 
-# =========================================================
-# CASH ACCOUNT FOR USER
-# =========================================================
+async function loginUser(){
 
-def ensure_cash_account(
-    conn,
-    user_id
-):
+    const username = document
+        .getElementById("username")
+        .value
+        .trim();
 
-    account = conn.execute("""
-        SELECT *
-        FROM cash_account
-        WHERE owner_id = ?
-        LIMIT 1
-    """, (
-        user_id,
-    )).fetchone()
+    const password = document
+        .getElementById("password")
+        .value;
 
-    if account:
+    if(!username || !password){
 
-        return account
+        showMessage("Enter username and password.");
+        return;
+    }
 
-    cursor = conn.execute("""
-        INSERT INTO cash_account
-        (
-            balance,
-            owner_id
-        )
-        VALUES (?, ?)
-    """, (
-        0,
-        user_id
-    ))
+    try{
 
-    conn.commit()
+        const response = await fetch("/login", {
 
-    return conn.execute("""
-        SELECT *
-        FROM cash_account
-        WHERE id = ?
-    """, (
-        cursor.lastrowid,
-    )).fetchone()
+            method:"POST",
 
-
-# =========================================================
-# HOME FILES
-# =========================================================
-
-@app.route("/")
-def home():
-
-    return send_from_directory(
-        ".",
-        "index.html"
-    )
-
-
-@app.route("/style.css")
-def style():
-
-    return send_from_directory(
-        ".",
-        "style.css"
-    )
-
+            headers:{
+                "Content-Type":"application/json"
+            },
 
-@app.route("/script.js")
-def script():
-
-    return send_from_directory(
-        ".",
-        "script.js"
-    )
+            body:JSON.stringify({
+                username:username,
+                password:password
+            })
 
+        });
 
-# =========================================================
-# REGISTER
-# =========================================================
+        const data = await response.json();
 
-@app.route(
-    "/register",
-    methods=["POST"]
-)
-def register():
-
-    data = request.get_json(
-        silent=True
-    )
+        if(data.success){
 
-    if not data:
+            window.location.href = data.redirect;
 
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    username = str(
-        data.get("username", "")
-    ).strip()
-
-    password = str(
-        data.get("password", "")
-    )
-
-    if len(username) < 3:
-
-        return jsonify(
-            success=False,
-            message="Username must contain at least 3 characters."
-        ), 400
-
-    if len(password) < 4:
-
-        return jsonify(
-            success=False,
-            message="Password must contain at least 4 characters."
-        ), 400
-
-    conn = get_db()
-
-    try:
+        }else{
 
-        cursor = conn.execute("""
-            INSERT INTO users
-            (
-                username,
-                password,
-                role
-            )
-            VALUES (?, ?, ?)
-        """, (
-            username,
-            generate_password_hash(password),
-            "user"
-        ))
+            showMessage(data.message);
 
-        user_id = cursor.lastrowid
+        }
 
-        # Every new user gets OWN cash account.
-        conn.execute("""
-            INSERT INTO cash_account
-            (
-                balance,
-                owner_id
-            )
-            VALUES (?, ?)
-        """, (
-            0,
-            user_id
-        ))
+    }catch(error){
 
-        conn.commit()
+        console.error(error);
 
-    except sqlite3.IntegrityError:
+        showMessage(
+            "Connection error. Please try again."
+        );
 
-        conn.rollback()
-        conn.close()
+    }
+}
 
-        return jsonify(
-            success=False,
-            message="Username already exists."
-        ), 409
 
-    conn.close()
+async function registerUser(){
 
-    return jsonify(
-        success=True,
-        message="Account created successfully."
-    )
-
-
-# =========================================================
-# LOGIN
-# =========================================================
+    const username = document
+        .getElementById("rusername")
+        .value
+        .trim();
 
-@app.route(
-    "/login",
-    methods=["POST"]
-)
-def login():
+    const password = document
+        .getElementById("rpassword")
+        .value;
 
-    data = request.get_json(
-        silent=True
-    )
+    if(!username || !password){
 
-    if not data:
+        showMessage("Enter username and password.");
 
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
+        return;
+    }
 
-    username = str(
-        data.get("username", "")
-    ).strip()
+    try{
 
-    password = str(
-        data.get("password", "")
-    )
+        const response = await fetch("/register", {
 
-    conn = get_db()
+            method:"POST",
 
-    user = conn.execute("""
-        SELECT *
-        FROM users
-        WHERE username = ?
-    """, (
-        username,
-    )).fetchone()
+            headers:{
+                "Content-Type":"application/json"
+            },
 
-    if not user:
+            body:JSON.stringify({
+                username:username,
+                password:password
+            })
 
-        conn.close()
+        });
 
-        return jsonify(
-            success=False,
-            message="Invalid username or password."
-        ), 401
+        const data = await response.json();
 
-    try:
+        showMessage(data.message, data.success);
 
-        valid = check_password_hash(
-            user["password"],
-            password
-        )
+        if(data.success){
 
-    except Exception:
+            document.getElementById("username").value = username;
 
-        valid = (
-            user["password"] == password
-        )
+            document.getElementById("password").value = password;
 
-    if not valid:
+            document.getElementById("rusername").value = "";
 
-        conn.close()
+            document.getElementById("rpassword").value = "";
+        }
 
-        return jsonify(
-            success=False,
-            message="Invalid username or password."
-        ), 401
+    }catch(error){
 
-    # Make sure this user has private cash account.
-    ensure_cash_account(
-        conn,
-        user["id"]
-    )
+        console.error(error);
 
-    conn.close()
+        showMessage(
+            "Connection error. Please try again."
+        );
 
-    session.clear()
+    }
+}
 
-    session["user_id"] = user["id"]
-    session["username"] = user["username"]
-    session["role"] = user["role"]
+</script>
 
-    # Admin goes to admin dashboard.
-    # Normal user goes to normal dashboard.
-    redirect_url = (
-        "/admin-dashboard"
-        if user["role"] == "admin"
-        else "/dashboard"
-    )
+</body>
+</html>
+"""
 
-    return jsonify(
-        success=True,
-        message="Login successful.",
-        username=user["username"],
-        role=user["role"],
-        redirect_url=redirect_url
-    )
 
-
-# =========================================================
-# LOGOUT
-# =========================================================
-
-@app.route("/logout")
-def logout():
-
-    session.clear()
-
-    return redirect("/")
-
-
-# =========================================================
-# USER DASHBOARD
-# =========================================================
+# ============================================================
+# DASHBOARD
+# ============================================================
 
 DASHBOARD_HTML = """
-<!DOCTYPE html>
-
+<!doctype html>
 <html>
 
 <head>
 
-<meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Stock Management Dashboard</title>
+<title>Dashboard</title>
 
 <style>
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: #f1f5f9;
-    color: #0f172a;
-}
-
-.navbar {
-    background: #0f172a;
-    color: white;
-    padding: 18px 30px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.brand {
-    font-size: 21px;
-    font-weight: bold;
-}
-
-.logout {
-    border: none;
-    background: #ef4444;
-    color: white;
-    padding: 10px 16px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.container {
-    max-width: 1450px;
-    margin: auto;
-    padding: 30px 20px;
-}
-
-.subtitle {
-    color: #64748b;
-    margin-bottom: 25px;
-}
-
-.cards {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 18px;
-}
-
-.card {
-    background: white;
-    padding: 22px;
-    border-radius: 15px;
-    box-shadow: 0 4px 20px rgba(0,0,0,.06);
-}
-
-.title {
-    color: #64748b;
-    font-size: 13px;
-    font-weight: bold;
-    margin-bottom: 12px;
-}
-
-.number {
-    font-size: 27px;
-    font-weight: bold;
-}
-
-.cash {
-    color: #16a34a;
-}
-
-.sales {
-    color: #2563eb;
-}
-
-.profit {
-    color: #7c3aed;
-}
-
-.stock {
-    color: #ea580c;
-}
-
-.low {
-    color: #dc2626;
-}
-
-.menu {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 15px;
-    margin-top: 25px;
-}
-
-.menu a {
-    text-decoration: none;
-    background: white;
-    color: #0f172a;
-    padding: 20px;
-    border-radius: 12px;
-    text-align: center;
-    font-weight: bold;
-    box-shadow: 0 4px 20px rgba(0,0,0,.05);
-}
-
-.menu a:hover {
-    background: #2563eb;
-    color: white;
-}
-
-@media(max-width:1000px) {
-
-    .cards {
-        grid-template-columns: repeat(2,1fr);
-    }
-
-    .menu {
-        grid-template-columns: repeat(2,1fr);
-    }
-}
-
-@media(max-width:600px) {
-
-    .cards {
-        grid-template-columns: 1fr;
-    }
-
-    .menu {
-        grid-template-columns: 1fr;
-    }
-}
-
+{{ css }}
 </style>
 
 </head>
 
 <body>
 
-<div class="navbar">
+<div class="nav">
 
 <div class="brand">
-📦 Stock Management System
+📦 Stock Management
 </div>
 
 <div>
-
 👤 {{ username }}
 
-<button
-class="logout"
-onclick="location.href='/logout'">
-
+<a class="btn red" href="/logout">
 LOGOUT
+</a>
 
-</button>
+</div>
 
 </div>
 
-</div>
 
 <div class="container">
+
+<div class="top">
+
+<div>
 
 <h1>
 Welcome, {{ username }} 👋
 </h1>
 
-<div class="subtitle">
-Your private stock management account.
+<p class="muted">
+Manage stock, cash, sales and profit.
+</p>
+
 </div>
+
+</div>
+
 
 <div class="cards">
 
 <div class="card">
-<div class="title">💰 CASH BALANCE</div>
-<div id="cashBalance" class="number cash">0</div>
+<div class="title">PRODUCTS</div>
+<div id="productsCount" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">💵 TOTAL SALES</div>
-<div id="totalSales" class="number sales">0</div>
+<div class="title">TOTAL STOCK</div>
+<div id="stockCount" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">📈 PROFIT</div>
-<div id="profit" class="number profit">0</div>
+<div class="title">STOCK VALUE</div>
+<div id="stockValue" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">📊 STOCK VALUE</div>
-<div id="stockValue" class="number stock">0</div>
+<div class="title">CASH BALANCE</div>
+<div id="cashBalance" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">📦 PRODUCTS</div>
-<div id="totalProducts" class="number">0</div>
+<div class="title">POTENTIAL PROFIT</div>
+<div id="potentialProfit" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">📦 TOTAL STOCK</div>
-<div id="totalStock" class="number">0</div>
+<div class="title">TOTAL SALES</div>
+<div id="totalSales" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">⚠️ LOW STOCK</div>
-<div id="lowStock" class="number low">0</div>
+<div class="title">TOTAL PROFIT</div>
+<div id="totalProfit" class="num">0</div>
 </div>
 
 <div class="card">
-<div class="title">💸 CASH OUT</div>
-<div id="cashOut" class="number low">0</div>
+<div class="title">LOW STOCK</div>
+<div id="lowStock" class="num">0</div>
 </div>
 
 </div>
+
 
 <div class="menu">
 
@@ -830,18 +890,25 @@ Your private stock management account.
 </a>
 
 <a href="/history">
-🧾 Transactions
+📜 History
 </a>
 
 </div>
 
 </div>
 
+
 <script>
 
-async function loadDashboard() {
+function money(value){
 
-    try {
+    return Number(value || 0).toLocaleString();
+}
+
+
+async function loadDashboard(){
+
+    try{
 
         const response =
             await fetch("/dashboard-data");
@@ -849,898 +916,168 @@ async function loadDashboard() {
         const data =
             await response.json();
 
-        if (!data.success) return;
+        if(!data.success){
 
-        document.getElementById(
-            "cashBalance"
-        ).textContent =
-            Number(
-                data.cash_balance
-            ).toLocaleString();
+            console.error(data.message);
 
-        document.getElementById(
-            "totalSales"
-        ).textContent =
-            Number(
-                data.total_sales
-            ).toLocaleString();
+            return;
+        }
 
-        document.getElementById(
-            "profit"
-        ).textContent =
-            Number(
-                data.profit
-            ).toLocaleString();
+        document.getElementById("productsCount")
+            .textContent = data.total_products;
 
-        document.getElementById(
-            "stockValue"
-        ).textContent =
-            Number(
-                data.stock_value
-            ).toLocaleString();
+        document.getElementById("stockCount")
+            .textContent = data.total_stock;
 
-        document.getElementById(
-            "totalProducts"
-        ).textContent =
-            data.total_products;
+        document.getElementById("stockValue")
+            .textContent = money(data.stock_value);
 
-        document.getElementById(
-            "totalStock"
-        ).textContent =
-            data.total_stock;
+        document.getElementById("cashBalance")
+            .textContent = money(data.cash_balance);
 
-        document.getElementById(
-            "lowStock"
-        ).textContent =
-            data.low_stock;
+        document.getElementById("potentialProfit")
+            .textContent = money(data.potential_profit);
 
-        document.getElementById(
-            "cashOut"
-        ).textContent =
-            Number(
-                data.total_cash_out
-            ).toLocaleString();
+        document.getElementById("totalSales")
+            .textContent = money(data.total_sales);
 
-    }
+        document.getElementById("totalProfit")
+            .textContent = money(data.total_profit);
 
-    catch(error) {
+        document.getElementById("lowStock")
+            .textContent = data.low_stock;
 
-        console.log(error);
+    }catch(error){
+
+        console.error(
+            "Dashboard error:",
+            error
+        );
 
     }
 }
+
 
 loadDashboard();
 
 setInterval(
     loadDashboard,
-    3000
+    5000
 );
 
 </script>
 
 </body>
-
 </html>
 """
 
 
-@app.route("/dashboard")
-def dashboard():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    # Admin should use admin dashboard.
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        DASHBOARD_HTML,
-        username=session["username"]
-    )
-
-
-# =========================================================
-# USER DASHBOARD DATA
-# USER SEES ONLY HIS DATA
-# =========================================================
-
-@app.route("/dashboard-data")
-@login_required
-def dashboard_data():
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    cash = conn.execute("""
-        SELECT balance
-        FROM cash_account
-        WHERE owner_id = ?
-        LIMIT 1
-    """, (
-        user_id,
-    )).fetchone()
-
-    total_products = conn.execute("""
-        SELECT COUNT(*)
-        FROM products
-        WHERE owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    total_stock = conn.execute("""
-        SELECT COALESCE(
-            SUM(quantity), 0
-        )
-        FROM products
-        WHERE owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    stock_value = conn.execute("""
-        SELECT COALESCE(
-            SUM(quantity * purchase_price),
-            0
-        )
-        FROM products
-        WHERE owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    total_sales = conn.execute("""
-        SELECT COALESCE(
-            SUM(amount), 0
-        )
-        FROM transactions
-        WHERE transaction_type = 'STOCK OUT'
-        AND owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    profit = conn.execute("""
-        SELECT COALESCE(
-            SUM(profit), 0
-        )
-        FROM transactions
-        WHERE transaction_type = 'STOCK OUT'
-        AND owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    total_cash_out = conn.execute("""
-        SELECT COALESCE(
-            SUM(amount), 0
-        )
-        FROM transactions
-        WHERE transaction_type = 'CASH OUT'
-        AND owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    low_stock = conn.execute("""
-        SELECT COUNT(*)
-        FROM products
-        WHERE quantity <= 5
-        AND owner_id = ?
-    """, (
-        user_id,
-    )).fetchone()[0]
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-
-        cash_balance=round(
-            float(
-                cash["balance"]
-                if cash else 0
-            ),
-            2
-        ),
-
-        total_products=total_products,
-
-        total_stock=total_stock,
-
-        stock_value=round(
-            float(stock_value),
-            2
-        ),
-
-        total_sales=round(
-            float(total_sales),
-            2
-        ),
-
-        profit=round(
-            float(profit),
-            2
-        ),
-
-        total_cash_out=round(
-            float(total_cash_out),
-            2
-        ),
-
-        low_stock=low_stock
-    )
-
-
-# =========================================================
-# CASH PAGE
-# =========================================================
-
-CASH_HTML = """
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Cash Management</title>
-
-<style>
-
-body {
-    font-family: Arial;
-    background: #f1f5f9;
-    padding: 30px;
-}
-
-.container {
-    max-width: 700px;
-    margin: auto;
-}
-
-.box {
-    background: white;
-    padding: 30px;
-    border-radius: 15px;
-    margin-bottom: 20px;
-}
-
-input {
-    width: 100%;
-    padding: 13px;
-    margin: 10px 0;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-}
-
-button {
-    width: 100%;
-    padding: 14px;
-    border: none;
-    border-radius: 8px;
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    margin-top: 10px;
-}
-
-.in {
-    background: #16a34a;
-}
-
-.out {
-    background: #ef4444;
-}
-
-.balance {
-    font-size: 35px;
-    font-weight: bold;
-    color: #16a34a;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<a href="/dashboard">
-← Dashboard
-</a>
-
-<h1>
-💰 Cash Management
-</h1>
-
-<div class="box">
-
-<div>
-Current Cash Balance
-</div>
-
-<div id="balance"
-class="balance">
-0
-</div>
-
-</div>
-
-<div class="box">
-
-<h2>
-➕ Cash In
-</h2>
-
-<input
-id="cashInAmount"
-type="number"
-min="0.01"
-step="0.01"
-placeholder="Amount"
->
-
-<input
-id="cashInDescription"
-type="text"
-placeholder="Description"
->
-
-<button
-class="in"
-onclick="cashIn()">
-
-ADD CASH
-
-</button>
-
-</div>
-
-<div class="box">
-
-<h2>
-➖ Cash Out
-</h2>
-
-<input
-id="cashOutAmount"
-type="number"
-min="0.01"
-step="0.01"
-placeholder="Amount"
->
-
-<input
-id="cashOutDescription"
-type="text"
-placeholder="Description"
->
-
-<button
-class="out"
-onclick="cashOut()">
-
-REMOVE CASH
-
-</button>
-
-</div>
-
-</div>
-
-<script>
-
-async function loadBalance() {
-
-    const response =
-        await fetch("/dashboard-data");
-
-    const data =
-        await response.json();
-
-    if(data.success) {
-
-        document.getElementById(
-            "balance"
-        ).textContent =
-            Number(
-                data.cash_balance
-            ).toLocaleString();
-
-    }
-}
-
-
-async function sendCash(
-    type,
-    amount,
-    description
-) {
-
-    const response =
-        await fetch(
-            "/api/cash",
-            {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-                        type,
-                        amount,
-                        description
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success) {
-
-        loadBalance();
-
-        document.getElementById(
-            "cashInAmount"
-        ).value = "";
-
-        document.getElementById(
-            "cashOutAmount"
-        ).value = "";
-
-        document.getElementById(
-            "cashInDescription"
-        ).value = "";
-
-        document.getElementById(
-            "cashOutDescription"
-        ).value = "";
-
-    }
-}
-
-
-function cashIn() {
-
-    const amount =
-        Number(
-            document.getElementById(
-                "cashInAmount"
-            ).value
-        );
-
-    const description =
-        document.getElementById(
-            "cashInDescription"
-        ).value;
-
-    if(amount <= 0) {
-
-        alert(
-            "Enter a valid amount."
-        );
-
-        return;
-    }
-
-    sendCash(
-        "CASH IN",
-        amount,
-        description
-    );
-}
-
-
-function cashOut() {
-
-    const amount =
-        Number(
-            document.getElementById(
-                "cashOutAmount"
-            ).value
-        );
-
-    const description =
-        document.getElementById(
-            "cashOutDescription"
-        ).value;
-
-    if(amount <= 0) {
-
-        alert(
-            "Enter a valid amount."
-        );
-
-        return;
-    }
-
-    sendCash(
-        "CASH OUT",
-        amount,
-        description
-    );
-}
-
-
-loadBalance();
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-@app.route("/cash")
-def cash_page():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        CASH_HTML
-    )
-
-
-# =========================================================
-# CASH API
-# =========================================================
-
-@app.route(
-    "/api/cash",
-    methods=["POST"]
-)
-@login_required
-def cash_transaction():
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    transaction_type = str(
-        data.get("type", "")
-    ).upper().strip()
-
-    description = str(
-        data.get("description", "")
-    ).strip()
-
-    try:
-
-        amount = float(
-            data.get("amount")
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid amount."
-        ), 400
-
-    if amount <= 0:
-
-        return jsonify(
-            success=False,
-            message="Amount must be greater than zero."
-        ), 400
-
-    if transaction_type not in [
-        "CASH IN",
-        "CASH OUT"
-    ]:
-
-        return jsonify(
-            success=False,
-            message="Invalid cash transaction."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    try:
-
-        account = ensure_cash_account(
-            conn,
-            user_id
-        )
-
-        before = float(
-            account["balance"]
-        )
-
-        if (
-            transaction_type == "CASH OUT"
-            and amount > before
-        ):
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message=(
-                    f"Not enough cash. "
-                    f"Available: {before:,.2f} Frw."
-                )
-            ), 400
-
-        if transaction_type == "CASH IN":
-
-            after = before + amount
-
-        else:
-
-            after = before - amount
-
-        conn.execute("""
-            UPDATE cash_account
-            SET balance = ?
-            WHERE owner_id = ?
-        """, (
-            after,
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO transactions
-            (
-                transaction_type,
-                amount,
-                cash_before,
-                cash_after,
-                username,
-                description,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            transaction_type,
-            amount,
-            before,
-            after,
-            current_username(),
-            description,
-            user_id
-        ))
-
-        conn.commit()
-
-    except Exception as error:
-
-        conn.rollback()
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Cash transaction failed."
-        ), 500
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message=(
-            f"{transaction_type} successful. "
-            f"New balance: {after:,.2f} Frw"
-        )
-    )
-
-
-# =========================================================
+# ============================================================
 # PRODUCTS PAGE
-# =========================================================
+# ============================================================
 
 PRODUCTS_HTML = """
-<!DOCTYPE html>
-
+<!doctype html>
 <html>
 
 <head>
 
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 
 <title>Products</title>
 
 <style>
-
-body {
-    font-family: Arial;
-    background: #f1f5f9;
-    padding: 25px;
-}
-
-.container {
-    max-width: 1400px;
-    margin: auto;
-}
-
-.box {
-    background: white;
-    padding: 25px;
-    border-radius: 15px;
-    margin-bottom: 20px;
-}
-
-.grid {
-    display: grid;
-    grid-template-columns:
-        2fr 1fr 1fr 1fr auto;
-    gap: 10px;
-}
-
-input {
-    padding: 12px;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-}
-
-button {
-    border: none;
-    border-radius: 8px;
-    padding: 12px 18px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.add {
-    background: #16a34a;
-    color: white;
-}
-
-.delete {
-    background: #ef4444;
-    color: white;
-}
-
-.edit {
-    background: #2563eb;
-    color: white;
-    margin: 3px;
-}
-
-.stockedit {
-    background: #7c3aed;
-    color: white;
-    margin: 3px;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-}
-
-th,
-td {
-    padding: 13px;
-    border-bottom: 1px solid #ddd;
-    text-align: left;
-}
-
-th {
-    background: #0f172a;
-    color: white;
-}
-
-@media(max-width:900px) {
-
-    .grid {
-        grid-template-columns: 1fr;
-    }
-
-    .table-box {
-        overflow-x: auto;
-    }
-
-}
-
+{{ css }}
 </style>
 
 </head>
 
 <body>
 
-<div class="container">
+<div class="nav">
 
-<a href="/dashboard">
+<div class="brand">
+📦 Products
+</div>
+
+<a class="btn" href="/dashboard">
 ← Dashboard
 </a>
 
-<h1>
-📦 Products
-</h1>
+</div>
+
+
+<div class="container">
+
 
 <div class="box">
 
 <h2>
-Add Product
+➕ Add Product
 </h2>
 
-<div class="grid">
+<div class="form-grid">
 
 <input
-id="name"
-placeholder="Product name"
+    id="productName"
+    class="input"
+    placeholder="Product name"
 >
 
 <input
-id="quantity"
-type="number"
-min="0"
-placeholder="Initial quantity"
+    id="productQuantity"
+    class="input"
+    type="number"
+    min="0"
+    placeholder="Initial stock"
 >
 
 <input
-id="purchase"
-type="number"
-min="0"
-step="0.01"
-placeholder="Purchase price"
+    id="purchasePrice"
+    class="input"
+    type="number"
+    min="0"
+    step="0.01"
+    placeholder="Purchase price"
 >
 
 <input
-id="selling"
-type="number"
-min="0"
-step="0.01"
-placeholder="Selling price"
+    id="sellingPrice"
+    class="input"
+    type="number"
+    min="0"
+    step="0.01"
+    placeholder="Selling price"
 >
 
 <button
-class="add"
-onclick="addProduct()">
-
-ADD PRODUCT
-
+    type="button"
+    class="btn green"
+    onclick="addProduct()"
+>
+ADD
 </button>
 
 </div>
 
-<p>
-💡 Initial stock is recorded without removing
-cash. Use Stock In when buying new stock.
+<p class="muted">
+Initial stock does not change cash.
+Use Stock In when purchasing stock.
 </p>
 
 </div>
 
-<div class="table-box">
+
+<input
+    id="productSearch"
+    class="input search"
+    placeholder="🔎 Search..."
+    oninput="filterProducts()"
+>
+
+
+<div class="table-wrap">
 
 <table>
 
@@ -1751,16 +1088,17 @@ cash. Use Stock In when buying new stock.
 <th>ID</th>
 <th>Product</th>
 <th>Stock</th>
-<th>Purchase Price</th>
-<th>Selling Price</th>
-<th>Profit / Unit</th>
-<th>Actions</th>
+<th>Purchase</th>
+<th>Selling</th>
+<th>Profit/Unit</th>
+<th>Action</th>
 
 </tr>
 
 </thead>
 
-<tbody id="products">
+<tbody id="productRows">
+
 </tbody>
 
 </table>
@@ -1769,289 +1107,467 @@ cash. Use Stock In when buying new stock.
 
 </div>
 
+
 <script>
 
-async function loadProducts() {
+let productsList = [];
 
-    const response =
-        await fetch("/api/products");
 
-    const data =
-        await response.json();
+function escapeHTML(value){
 
-    const table =
-        document.getElementById(
-            "products"
+    return String(value ?? "")
+        .replace(/[&<>"']/g, function(char){
+
+            const map = {
+
+                "&":"&amp;",
+                "<":"&lt;",
+                ">":"&gt;",
+                '"':"&quot;",
+                "'":"&#39;"
+
+            };
+
+            return map[char];
+
+        });
+
+}
+
+
+function money(value){
+
+    return Number(value || 0).toLocaleString();
+}
+
+
+async function loadProducts(){
+
+    try{
+
+        const response =
+            await fetch("/api/products");
+
+        const data =
+            await response.json();
+
+        if(!data.success){
+
+            alert(data.message);
+
+            return;
+        }
+
+        productsList =
+            data.products || [];
+
+        renderProducts(productsList);
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Failed to load products."
         );
 
-    table.innerHTML = "";
+    }
+}
 
-    if(!data.success) {
+
+function renderProducts(list){
+
+    const rows =
+        document.getElementById("productRows");
+
+    rows.innerHTML = "";
+
+    if(list.length === 0){
+
+        rows.innerHTML = `
+            <tr>
+                <td colspan="7"
+                    style="text-align:center;padding:30px">
+                    No products found.
+                </td>
+            </tr>
+        `;
+
+        return;
+    }
+
+
+    list.forEach(function(product){
+
+        const profit =
+            Number(product.selling_price) -
+            Number(product.purchase_price);
+
+
+        const tr =
+            document.createElement("tr");
+
+
+        tr.innerHTML = `
+
+            <td>${product.id}</td>
+
+            <td>
+                ${escapeHTML(product.name)}
+            </td>
+
+            <td>
+                ${product.quantity}
+            </td>
+
+            <td>
+                ${money(product.purchase_price)}
+            </td>
+
+            <td>
+                ${money(product.selling_price)}
+            </td>
+
+            <td class="${profit >= 0 ? "profit" : "loss"}">
+                ${money(profit)}
+            </td>
+
+            <td>
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="editProduct(${product.id})"
+                >
+                    EDIT
+                </button>
+
+                <button
+                    type="button"
+                    class="btn purple"
+                    onclick="editStock(${product.id}, ${product.quantity})"
+                >
+                    STOCK
+                </button>
+
+                <button
+                    type="button"
+                    class="btn red"
+                    onclick="deleteProduct(${product.id})"
+                >
+                    DELETE
+                </button>
+
+            </td>
+
+        `;
+
+        rows.appendChild(tr);
+
+    });
+
+}
+
+
+function filterProducts(){
+
+    const query =
+        document
+        .getElementById("productSearch")
+        .value
+        .toLowerCase()
+        .trim();
+
+
+    const filtered =
+        productsList.filter(function(product){
+
+            return (
+                String(product.name)
+                .toLowerCase()
+                .includes(query)
+                ||
+                String(product.id)
+                .includes(query)
+            );
+
+        });
+
+
+    renderProducts(filtered);
+}
+
+
+async function addProduct(){
+
+    const name =
+        document
+        .getElementById("productName")
+        .value
+        .trim();
+
+    const quantity =
+        Number(
+            document
+            .getElementById("productQuantity")
+            .value
+        );
+
+    const purchase =
+        Number(
+            document
+            .getElementById("purchasePrice")
+            .value
+        );
+
+    const selling =
+        Number(
+            document
+            .getElementById("sellingPrice")
+            .value
+        );
+
+
+    if(
+        !name ||
+        !Number.isInteger(quantity) ||
+        quantity < 0 ||
+        !Number.isFinite(purchase) ||
+        purchase < 0 ||
+        !Number.isFinite(selling) ||
+        selling < 0
+    ){
+
+        alert(
+            "Enter valid product information."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        name:name,
+                        quantity:quantity,
+                        purchase_price:purchase,
+                        selling_price:selling
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
 
         alert(data.message);
-        return;
+
+
+        if(data.success){
+
+            document.getElementById(
+                "productName"
+            ).value = "";
+
+            document.getElementById(
+                "productQuantity"
+            ).value = "";
+
+            document.getElementById(
+                "purchasePrice"
+            ).value = "";
+
+            document.getElementById(
+                "sellingPrice"
+            ).value = "";
+
+            loadProducts();
+        }
+
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not connect to server."
+        );
 
     }
 
-    data.products.forEach(
-        p => {
+}
 
-            const profit =
-                Number(p.selling_price)
-                -
-                Number(p.purchase_price);
 
-            table.innerHTML += `
+async function editProduct(id){
 
-            <tr>
+    const product =
+        productsList.find(
+            item => Number(item.id) === Number(id)
+        );
 
-            <td>${p.id}</td>
 
-            <td>${p.name}</td>
+    if(!product){
 
-            <td>${p.quantity}</td>
+        alert("Product not found.");
 
-            <td>
-            ${Number(
-                p.purchase_price
-            ).toLocaleString()}
-            </td>
+        return;
+    }
 
-            <td>
-            ${Number(
-                p.selling_price
-            ).toLocaleString()}
-            </td>
 
-            <td>
-            ${profit.toLocaleString()}
-            </td>
+    const name =
+        prompt(
+            "Product name:",
+            product.name
+        );
 
-            <td>
 
-            <button
-            class="edit"
-            onclick="editProduct(${p.id})">
-            EDIT PRICE
-            </button>
+    if(name === null){
 
-            <button
-            class="stockedit"
-            onclick="editStock(${p.id}, ${p.quantity})">
-            EDIT STOCK
-            </button>
+        return;
+    }
 
-            <button
-            class="delete"
-            onclick="deleteProduct(${p.id})">
-            DELETE
-            </button>
 
-            </td>
+    const purchase =
+        prompt(
+            "Purchase price:",
+            product.purchase_price
+        );
 
-            </tr>
 
-            `;
+    if(purchase === null){
+
+        return;
+    }
+
+
+    const selling =
+        prompt(
+            "Selling price:",
+            product.selling_price
+        );
+
+
+    if(selling === null){
+
+        return;
+    }
+
+
+    const purchaseNumber =
+        Number(purchase);
+
+    const sellingNumber =
+        Number(selling);
+
+
+    if(
+        !name.trim() ||
+        !Number.isFinite(purchaseNumber) ||
+        purchaseNumber < 0 ||
+        !Number.isFinite(sellingNumber) ||
+        sellingNumber < 0
+    ){
+
+        alert(
+            "Enter valid values."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products/" + id,
+                {
+                    method:"PUT",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        name:name.trim(),
+                        purchase_price:
+                            purchaseNumber,
+                        selling_price:
+                            sellingNumber
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            loadProducts();
 
         }
-    );
 
-}
+    }catch(error){
 
-
-async function addProduct() {
-
-    const name =
-        document.getElementById(
-            "name"
-        ).value.trim();
-
-    const quantity =
-        Number(
-            document.getElementById(
-                "quantity"
-            ).value
-        );
-
-    const purchase =
-        Number(
-            document.getElementById(
-                "purchase"
-            ).value
-        );
-
-    const selling =
-        Number(
-            document.getElementById(
-                "selling"
-            ).value
-        );
-
-    if(!name) {
+        console.error(error);
 
         alert(
-            "Product name is required."
+            "Could not update product."
         );
-
-        return;
-    }
-
-    if(
-        quantity < 0 ||
-        purchase < 0 ||
-        selling < 0
-    ) {
-
-        alert(
-            "Values cannot be negative."
-        );
-
-        return;
-    }
-
-    const response =
-        await fetch(
-            "/api/products",
-            {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        name,
-                        quantity,
-                        purchase_price:
-                            purchase,
-                        selling_price:
-                            selling
-
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success) {
-
-        document.getElementById(
-            "name"
-        ).value = "";
-
-        document.getElementById(
-            "quantity"
-        ).value = "";
-
-        document.getElementById(
-            "purchase"
-        ).value = "";
-
-        document.getElementById(
-            "selling"
-        ).value = "";
-
-        loadProducts();
 
     }
 
 }
 
 
-async function editProduct(id) {
+async function editStock(id, currentQuantity){
 
-    const name =
+    const answer =
         prompt(
-            "New product name:"
+            "Current stock: " +
+            currentQuantity +
+            "\\nEnter correct total stock:",
+            currentQuantity
         );
 
-    if(
-        name === null ||
-        !name.trim()
-    ) return;
 
-    const purchase =
-        prompt(
-            "New purchase price:"
-        );
+    if(answer === null){
 
-    if(purchase === null) return;
-
-    const selling =
-        prompt(
-            "New selling price:"
-        );
-
-    if(selling === null) return;
-
-    const response =
-        await fetch(
-            "/api/products/" + id,
-            {
-
-                method: "PUT",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        name:
-                            name.trim(),
-
-                        purchase_price:
-                            Number(purchase),
-
-                        selling_price:
-                            Number(selling)
-
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success)
-        loadProducts();
-
-}
-
-
-async function editStock(
-    id,
-    currentQuantity
-) {
-
-    const newQuantity =
-        prompt(
-            `Current stock: ${currentQuantity}
-
-Enter the CORRECT total stock quantity:`
-        );
-
-    if(newQuantity === null)
         return;
+    }
+
 
     const quantity =
-        Number(newQuantity);
+        Number(answer);
+
 
     if(
         !Number.isInteger(quantity) ||
         quantity < 0
-    ) {
+    ){
 
         alert(
             "Enter a valid whole number."
@@ -2060,2862 +1576,64 @@ Enter the CORRECT total stock quantity:`
         return;
     }
 
+
     const reason =
         prompt(
-            "Reason for stock correction:"
-        );
-
-    if(reason === null)
-        return;
-
-    const response =
-        await fetch(
-            "/api/products/" + id + "/stock",
-            {
-
-                method: "PUT",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        quantity,
-                        reason
-
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success)
-        loadProducts();
-
-}
-
-
-async function deleteProduct(id) {
-
-    if(
-        !confirm(
-            "Delete this product?"
-        )
-    ) return;
-
-    const response =
-        await fetch(
-            "/api/products/" + id,
-            {
-                method: "DELETE"
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success)
-        loadProducts();
-
-}
-
-
-loadProducts();
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-@app.route("/products")
-def products_page():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        PRODUCTS_HTML
-    )
-
-
-# =========================================================
-# GET PRODUCTS
-# USER SEES ONLY HIS PRODUCTS
-# =========================================================
-
-@app.route("/api/products")
-@login_required
-def get_products():
-
-    conn = get_db()
-
-    products = conn.execute("""
-        SELECT *
-        FROM products
-        WHERE owner_id = ?
-        ORDER BY id DESC
-    """, (
-        current_user_id(),
-    )).fetchall()
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        products=[
-            dict(p)
-            for p in products
-        ]
-    )
-
-
-# =========================================================
-# ADD PRODUCT
-# =========================================================
-
-@app.route(
-    "/api/products",
-    methods=["POST"]
-)
-@login_required
-def add_product():
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    name = str(
-        data.get("name", "")
-    ).strip()
-
-    try:
-
-        quantity = int(
-            data.get("quantity", 0)
-        )
-
-        purchase = float(
-            data.get(
-                "purchase_price",
-                0
-            )
-        )
-
-        selling = float(
-            data.get(
-                "selling_price",
-                0
-            )
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid numbers."
-        ), 400
-
-    if not name:
-
-        return jsonify(
-            success=False,
-            message="Product name is required."
-        ), 400
-
-    if quantity < 0:
-
-        return jsonify(
-            success=False,
-            message="Quantity cannot be negative."
-        ), 400
-
-    if purchase < 0 or selling < 0:
-
-        return jsonify(
-            success=False,
-            message="Prices cannot be negative."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    existing = conn.execute("""
-        SELECT id
-        FROM products
-        WHERE name = ?
-        AND owner_id = ?
-    """, (
-        name,
-        user_id
-    )).fetchone()
-
-    if existing:
-
-        conn.close()
-
-        return jsonify(
-            success=False,
-            message="You already have a product with this name."
-        ), 409
-
-    try:
-
-        cursor = conn.execute("""
-            INSERT INTO products
-            (
-                name,
-                quantity,
-                purchase_price,
-                selling_price,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            name,
-            quantity,
-            purchase,
-            selling,
-            user_id
-        ))
-
-        product_id = cursor.lastrowid
-
-        if quantity > 0:
-
-            conn.execute("""
-                INSERT INTO history
-                (
-                    product_id,
-                    product_name,
-                    action,
-                    quantity,
-                    previous_quantity,
-                    new_quantity,
-                    username,
-                    owner_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                product_id,
-                name,
-                "INITIAL STOCK",
-                quantity,
-                0,
-                quantity,
-                current_username(),
-                user_id
-            ))
-
-        conn.commit()
-
-    except Exception as error:
-
-        conn.rollback()
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Product could not be added."
-        ), 500
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message=f"{name} added successfully."
-    )
-
-
-# =========================================================
-# EDIT PRODUCT
-# =========================================================
-
-@app.route(
-    "/api/products/<int:product_id>",
-    methods=["PUT"]
-)
-@login_required
-def edit_product(product_id):
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    name = str(
-        data.get("name", "")
-    ).strip()
-
-    try:
-
-        purchase = float(
-            data.get("purchase_price")
-        )
-
-        selling = float(
-            data.get("selling_price")
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid price."
-        ), 400
-
-    if not name:
-
-        return jsonify(
-            success=False,
-            message="Product name is required."
-        ), 400
-
-    if purchase < 0 or selling < 0:
-
-        return jsonify(
-            success=False,
-            message="Prices cannot be negative."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    product = conn.execute("""
-        SELECT *
-        FROM products
-        WHERE id = ?
-        AND owner_id = ?
-    """, (
-        product_id,
-        user_id
-    )).fetchone()
-
-    if not product:
-
-        conn.close()
-
-        return jsonify(
-            success=False,
-            message="Product not found."
-        ), 404
-
-    duplicate = conn.execute("""
-        SELECT id
-        FROM products
-        WHERE name = ?
-        AND owner_id = ?
-        AND id != ?
-    """, (
-        name,
-        user_id,
-        product_id
-    )).fetchone()
-
-    if duplicate:
-
-        conn.close()
-
-        return jsonify(
-            success=False,
-            message="You already have another product with that name."
-        ), 409
-
-    conn.execute("""
-        UPDATE products
-        SET
-            name = ?,
-            purchase_price = ?,
-            selling_price = ?
-        WHERE id = ?
-        AND owner_id = ?
-    """, (
-        name,
-        purchase,
-        selling,
-        product_id,
-        user_id
-    ))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message="Product updated successfully."
-    )
-
-
-# =========================================================
-# EDIT STOCK
-# =========================================================
-
-@app.route(
-    "/api/products/<int:product_id>/stock",
-    methods=["PUT"]
-)
-@login_required
-def edit_stock(product_id):
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    try:
-
-        new_quantity = int(
-            data.get("quantity")
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid quantity."
-        ), 400
-
-    reason = str(
-        data.get(
-            "reason",
+            "Reason for correction:",
             "Stock correction"
-        )
-    ).strip()
-
-    if new_quantity < 0:
-
-        return jsonify(
-            success=False,
-            message="Quantity cannot be negative."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    try:
-
-        product = conn.execute("""
-            SELECT *
-            FROM products
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            product_id,
-            user_id
-        )).fetchone()
-
-        if not product:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message="Product not found."
-            ), 404
-
-        old_quantity = int(
-            product["quantity"]
-        )
-
-        purchase_price = float(
-            product["purchase_price"]
-        )
-
-        difference = (
-            new_quantity -
-            old_quantity
-        )
-
-        if difference == 0:
-
-            conn.close()
-
-            return jsonify(
-                success=True,
-                message="No stock change was necessary."
-            )
-
-        account = ensure_cash_account(
-            conn,
-            user_id
-        )
-
-        cash_before = float(
-            account["balance"]
-        )
-
-        if difference > 0:
-
-            correction_cost = (
-                difference *
-                purchase_price
-            )
-
-            if correction_cost > cash_before:
-
-                conn.close()
-
-                return jsonify(
-                    success=False,
-                    message=(
-                        f"Not enough cash.\n\n"
-                        f"Additional stock: {difference}\n"
-                        f"Cost: {correction_cost:,.2f} Frw\n"
-                        f"Available cash: {cash_before:,.2f} Frw"
-                    )
-                ), 400
-
-            cash_after = (
-                cash_before -
-                correction_cost
-            )
-
-            transaction_type = "STOCK EDIT IN"
-
-            amount = correction_cost
-
-        else:
-
-            removed_quantity = abs(
-                difference
-            )
-
-            correction_value = (
-                removed_quantity *
-                purchase_price
-            )
-
-            cash_after = (
-                cash_before +
-                correction_value
-            )
-
-            transaction_type = "STOCK EDIT OUT"
-
-            amount = correction_value
-
-        conn.execute("""
-            UPDATE products
-            SET quantity = ?
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            new_quantity,
-            product_id,
-            user_id
-        ))
-
-        conn.execute("""
-            UPDATE cash_account
-            SET balance = ?
-            WHERE owner_id = ?
-        """, (
-            cash_after,
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO transactions
-            (
-                transaction_type,
-                product_id,
-                product_name,
-                quantity,
-                purchase_price,
-                selling_price,
-                amount,
-                cost_amount,
-                profit,
-                cash_before,
-                cash_after,
-                stock_before,
-                stock_after,
-                username,
-                description,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            transaction_type,
-            product_id,
-            product["name"],
-            abs(difference),
-            purchase_price,
-            product["selling_price"],
-            amount,
-            amount if difference > 0 else -amount,
-            0,
-            cash_before,
-            cash_after,
-            old_quantity,
-            new_quantity,
-            current_username(),
-            reason,
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO history
-            (
-                product_id,
-                product_name,
-                action,
-                quantity,
-                previous_quantity,
-                new_quantity,
-                username,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            product_id,
-            product["name"],
-            transaction_type,
-            abs(difference),
-            old_quantity,
-            new_quantity,
-            current_username(),
-            user_id
-        ))
-
-        conn.commit()
-
-    except Exception as error:
-
-        conn.rollback()
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Stock correction failed. No changes were saved."
-        ), 500
-
-    conn.close()
-
-    if difference > 0:
-
-        message = (
-            f"STOCK UPDATED!\n\n"
-            f"Product: {product['name']}\n"
-            f"Old stock: {old_quantity}\n"
-            f"New stock: {new_quantity}\n"
-            f"Added: {difference}\n"
-            f"Cost: {amount:,.2f} Frw\n"
-            f"Cash remaining: {cash_after:,.2f} Frw"
-        )
-
-    else:
-
-        message = (
-            f"STOCK UPDATED!\n\n"
-            f"Product: {product['name']}\n"
-            f"Old stock: {old_quantity}\n"
-            f"New stock: {new_quantity}\n"
-            f"Removed: {abs(difference)}\n"
-            f"Cash returned: {amount:,.2f} Frw\n"
-            f"New cash: {cash_after:,.2f} Frw"
-        )
-
-    return jsonify(
-        success=True,
-        message=message
-    )
-
-
-# =========================================================
-# DELETE PRODUCT
-# =========================================================
-
-@app.route(
-    "/api/products/<int:product_id>",
-    methods=["DELETE"]
-)
-@login_required
-def delete_product(product_id):
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    product = conn.execute("""
-        SELECT *
-        FROM products
-        WHERE id = ?
-        AND owner_id = ?
-    """, (
-        product_id,
-        user_id
-    )).fetchone()
-
-    if not product:
-
-        conn.close()
-
-        return jsonify(
-            success=False,
-            message="Product not found."
-        ), 404
-
-    if product["quantity"] > 0:
-
-        conn.close()
-
-        return jsonify(
-            success=False,
-            message=(
-                "You cannot delete a product "
-                "while stock is still available."
-            )
-        ), 400
-
-    conn.execute("""
-        DELETE FROM products
-        WHERE id = ?
-        AND owner_id = ?
-    """, (
-        product_id,
-        user_id
-    ))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message="Product deleted successfully."
-    )
-
-
-# =========================================================
-# STOCK IN PAGE
-# =========================================================
-
-STOCK_IN_HTML = """
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Stock In</title>
-
-<style>
-
-body {
-    font-family: Arial;
-    background: #f1f5f9;
-    padding: 30px;
-}
-
-.container {
-    max-width: 650px;
-    margin: auto;
-}
-
-.box {
-    background: white;
-    padding: 30px;
-    border-radius: 15px;
-}
-
-select,
-input {
-    width: 100%;
-    padding: 14px;
-    margin: 10px 0 20px;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-}
-
-button {
-    width: 100%;
-    padding: 14px;
-    background: #16a34a;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
-    cursor: pointer;
-}
-
-.info {
-    background: #eff6ff;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<a href="/dashboard">
-← Dashboard
-</a>
-
-<h1>
-➕ Stock In
-</h1>
-
-<div class="box">
-
-<div class="info">
-
-<strong>
-Stock In Calculation
-</strong>
-
-<br><br>
-
-Quantity × Purchase Price
-
-<br><br>
-
-The cost is removed from YOUR Cash Balance.
-
-</div>
-
-<label>
-Product
-</label>
-
-<select id="product">
-
-<option value="">
-Select product
-</option>
-
-</select>
-
-<label>
-Quantity
-</label>
-
-<input
-id="quantity"
-type="number"
-min="1"
-placeholder="Quantity"
->
-
-<label>
-Purchase Price Per Unit
-</label>
-
-<input
-id="purchasePrice"
-type="number"
-min="0"
-step="0.01"
-placeholder="Purchase price"
->
-
-<button
-onclick="stockIn()">
-
-ADD STOCK
-
-</button>
-
-</div>
-
-</div>
-
-<script>
-
-async function loadProducts() {
-
-    const response =
-        await fetch("/api/products");
-
-    const data =
-        await response.json();
-
-    const select =
-        document.getElementById(
-            "product"
         );
 
-    select.innerHTML =
-        '<option value="">Select product</option>';
 
-    data.products.forEach(
-        p => {
-
-            select.innerHTML += `
-
-            <option
-            value="${p.id}"
-            data-price="${p.purchase_price}">
-
-            ${p.name}
-            — Stock: ${p.quantity}
-            — Current Buy:
-            ${Number(
-                p.purchase_price
-            ).toLocaleString()}
-
-            </option>
-
-            `;
-
-        }
-    );
-}
-
-
-document.getElementById(
-    "product"
-).addEventListener(
-    "change",
-    function() {
-
-        const option =
-            this.options[
-                this.selectedIndex
-            ];
-
-        const price =
-            option.getAttribute(
-                "data-price"
-            );
-
-        if(price !== null) {
-
-            document.getElementById(
-                "purchasePrice"
-            ).value = price;
-
-        }
-
-    }
-);
-
-
-async function stockIn() {
-
-    const productId =
-        document.getElementById(
-            "product"
-        ).value;
-
-    const quantity =
-        Number(
-            document.getElementById(
-                "quantity"
-            ).value
-        );
-
-    const purchasePrice =
-        Number(
-            document.getElementById(
-                "purchasePrice"
-            ).value
-        );
-
-    if(
-        !productId ||
-        quantity <= 0 ||
-        purchasePrice < 0
-    ) {
-
-        alert(
-            "Enter valid stock information."
-        );
+    if(reason === null){
 
         return;
     }
 
-    const response =
-        await fetch(
-            "/api/stock-in",
-            {
 
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        product_id:
-                            Number(productId),
-
-                        quantity,
-
-                        purchase_price:
-                            purchasePrice
-
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success) {
-
-        document.getElementById(
-            "quantity"
-        ).value = "";
-
-        loadProducts();
-
-    }
-}
-
-
-loadProducts();
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-@app.route("/stock-in")
-def stock_in_page():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        STOCK_IN_HTML
-    )
-
-
-# =========================================================
-# STOCK IN API
-# =========================================================
-
-@app.route(
-    "/api/stock-in",
-    methods=["POST"]
-)
-@login_required
-def stock_in():
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    try:
-
-        product_id = int(
-            data.get("product_id")
-        )
-
-        quantity = int(
-            data.get("quantity")
-        )
-
-        new_purchase_price = float(
-            data.get("purchase_price")
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid product, quantity or purchase price."
-        ), 400
-
-    if quantity <= 0:
-
-        return jsonify(
-            success=False,
-            message="Quantity must be greater than zero."
-        ), 400
-
-    if new_purchase_price < 0:
-
-        return jsonify(
-            success=False,
-            message="Purchase price cannot be negative."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    try:
-
-        product = conn.execute("""
-            SELECT *
-            FROM products
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            product_id,
-            user_id
-        )).fetchone()
-
-        if not product:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message="Product not found."
-            ), 404
-
-        old_stock = int(
-            product["quantity"]
-        )
-
-        old_purchase_price = float(
-            product["purchase_price"]
-        )
-
-        selling_price = float(
-            product["selling_price"]
-        )
-
-        cost = (
-            quantity *
-            new_purchase_price
-        )
-
-        account = ensure_cash_account(
-            conn,
-            user_id
-        )
-
-        cash_before = float(
-            account["balance"]
-        )
-
-        if cost > cash_before:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message=(
-                    f"Not enough cash.\n\n"
-                    f"Stock cost: {cost:,.2f} Frw\n"
-                    f"Available cash: {cash_before:,.2f} Frw\n\n"
-                    f"Use Cash In first."
-                )
-            ), 400
-
-        new_stock = (
-            old_stock +
-            quantity
-        )
-
-        cash_after = (
-            cash_before -
-            cost
-        )
-
-        total_old_value = (
-            old_stock *
-            old_purchase_price
-        )
-
-        total_new_value = (
-            quantity *
-            new_purchase_price
-        )
-
-        average_price = (
-            (
-                total_old_value +
-                total_new_value
-            )
-            /
-            new_stock
-        )
-
-        conn.execute("""
-            UPDATE products
-            SET
-                quantity = ?,
-                purchase_price = ?
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            new_stock,
-            average_price,
-            product_id,
-            user_id
-        ))
-
-        conn.execute("""
-            UPDATE cash_account
-            SET balance = ?
-            WHERE owner_id = ?
-        """, (
-            cash_after,
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO transactions
-            (
-                transaction_type,
-                product_id,
-                product_name,
-                quantity,
-                purchase_price,
-                selling_price,
-                amount,
-                cost_amount,
-                profit,
-                cash_before,
-                cash_after,
-                stock_before,
-                stock_after,
-                username,
-                description,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            "STOCK IN",
-            product_id,
-            product["name"],
-            quantity,
-            new_purchase_price,
-            selling_price,
-            cost,
-            cost,
-            0,
-            cash_before,
-            cash_after,
-            old_stock,
-            new_stock,
-            current_username(),
-            (
-                f"Stock purchased at "
-                f"{new_purchase_price:,.2f} Frw/unit. "
-                f"Average cost now "
-                f"{average_price:,.2f} Frw/unit."
-            ),
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO history
-            (
-                product_id,
-                product_name,
-                action,
-                quantity,
-                previous_quantity,
-                new_quantity,
-                username,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            product_id,
-            product["name"],
-            "STOCK IN",
-            quantity,
-            old_stock,
-            new_stock,
-            current_username(),
-            user_id
-        ))
-
-        conn.commit()
-
-    except Exception as error:
-
-        conn.rollback()
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Stock In failed. No changes were saved."
-        ), 500
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message=(
-            f"STOCK IN SUCCESSFUL!\n\n"
-            f"Product: {product['name']}\n"
-            f"Added: {quantity}\n"
-            f"Purchase price: {new_purchase_price:,.2f} Frw\n"
-            f"Purchase cost: {cost:,.2f} Frw\n"
-            f"New stock: {new_stock}\n"
-            f"Average purchase price: "
-            f"{average_price:,.2f} Frw\n"
-            f"Cash remaining: {cash_after:,.2f} Frw"
-        )
-    )
-
-
-# =========================================================
-# STOCK OUT PAGE
-# =========================================================
-
-STOCK_OUT_HTML = """
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Stock Out</title>
-
-<style>
-
-body {
-    font-family: Arial;
-    background: #f1f5f9;
-    padding: 30px;
-}
-
-.container {
-    max-width: 650px;
-    margin: auto;
-}
-
-.box {
-    background: white;
-    padding: 30px;
-    border-radius: 15px;
-}
-
-select,
-input {
-    width: 100%;
-    padding: 14px;
-    margin: 10px 0 20px;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-}
-
-button {
-    width: 100%;
-    padding: 14px;
-    background: #ef4444;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
-    cursor: pointer;
-}
-
-.info {
-    background: #f0fdf4;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<a href="/dashboard">
-← Dashboard
-</a>
-
-<h1>
-🛒 Stock Out / Sale
-</h1>
-
-<div class="box">
-
-<div class="info">
-
-<strong>
-Automatic Sale Calculation
-</strong>
-
-<br><br>
-
-Sales = Quantity × Selling Price
-
-<br>
-
-Cost = Quantity × Purchase Price
-
-<br>
-
-Profit = Sales − Cost
-
-<br>
-
-Cash increases by Sales.
-
-</div>
-
-<label>
-Product
-</label>
-
-<select id="product">
-
-<option value="">
-Select product
-</option>
-
-</select>
-
-<label>
-Quantity Sold
-</label>
-
-<input
-id="quantity"
-type="number"
-min="1"
-placeholder="Quantity sold"
->
-
-<button
-onclick="stockOut()">
-
-SELL / REMOVE STOCK
-
-</button>
-
-</div>
-
-</div>
-
-<script>
-
-async function loadProducts() {
-
-    const response =
-        await fetch("/api/products");
-
-    const data =
-        await response.json();
-
-    const select =
-        document.getElementById(
-            "product"
-        );
-
-    select.innerHTML =
-        '<option value="">Select product</option>';
-
-    data.products.forEach(
-        p => {
-
-            select.innerHTML += `
-
-            <option value="${p.id}">
-
-            ${p.name}
-            — Stock: ${p.quantity}
-            — Sell:
-            ${Number(
-                p.selling_price
-            ).toLocaleString()}
-
-            </option>
-
-            `;
-
-        }
-    );
-}
-
-
-async function stockOut() {
-
-    const productId =
-        document.getElementById(
-            "product"
-        ).value;
-
-    const quantity =
-        Number(
-            document.getElementById(
-                "quantity"
-            ).value
-        );
-
-    if(
-        !productId ||
-        quantity <= 0
-    ) {
-
-        alert(
-            "Select a product and enter valid quantity."
-        );
-
-        return;
-    }
-
-    const response =
-        await fetch(
-            "/api/stock-out",
-            {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        product_id:
-                            Number(productId),
-
-                        quantity
-
-                    })
-            }
-        );
-
-    const data =
-        await response.json();
-
-    alert(data.message);
-
-    if(data.success) {
-
-        document.getElementById(
-            "quantity"
-        ).value = "";
-
-        loadProducts();
-
-    }
-}
-
-
-loadProducts();
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-@app.route("/stock-out")
-def stock_out_page():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        STOCK_OUT_HTML
-    )
-
-
-# =========================================================
-# STOCK OUT API
-# =========================================================
-
-@app.route(
-    "/api/stock-out",
-    methods=["POST"]
-)
-@login_required
-def stock_out():
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify(
-            success=False,
-            message="Invalid request."
-        ), 400
-
-    try:
-
-        product_id = int(
-            data.get("product_id")
-        )
-
-        quantity = int(
-            data.get("quantity")
-        )
-
-    except Exception:
-
-        return jsonify(
-            success=False,
-            message="Invalid product or quantity."
-        ), 400
-
-    if quantity <= 0:
-
-        return jsonify(
-            success=False,
-            message="Quantity must be greater than zero."
-        ), 400
-
-    user_id = current_user_id()
-
-    conn = get_db()
-
-    try:
-
-        product = conn.execute("""
-            SELECT *
-            FROM products
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            product_id,
-            user_id
-        )).fetchone()
-
-        if not product:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message="Product not found."
-            ), 404
-
-        old_stock = int(
-            product["quantity"]
-        )
-
-        if quantity > old_stock:
-
-            conn.close()
-
-            return jsonify(
-                success=False,
-                message=(
-                    f"Not enough stock. "
-                    f"Available: {old_stock}."
-                )
-            ), 400
-
-        purchase_price = float(
-            product["purchase_price"]
-        )
-
-        selling_price = float(
-            product["selling_price"]
-        )
-
-        sales_amount = (
-            quantity *
-            selling_price
-        )
-
-        cost_amount = (
-            quantity *
-            purchase_price
-        )
-
-        profit = (
-            sales_amount -
-            cost_amount
-        )
-
-        account = ensure_cash_account(
-            conn,
-            user_id
-        )
-
-        cash_before = float(
-            account["balance"]
-        )
-
-        cash_after = (
-            cash_before +
-            sales_amount
-        )
-
-        new_stock = (
-            old_stock -
-            quantity
-        )
-
-        conn.execute("""
-            UPDATE products
-            SET quantity = ?
-            WHERE id = ?
-            AND owner_id = ?
-        """, (
-            new_stock,
-            product_id,
-            user_id
-        ))
-
-        conn.execute("""
-            UPDATE cash_account
-            SET balance = ?
-            WHERE owner_id = ?
-        """, (
-            cash_after,
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO transactions
-            (
-                transaction_type,
-                product_id,
-                product_name,
-                quantity,
-                purchase_price,
-                selling_price,
-                amount,
-                cost_amount,
-                profit,
-                cash_before,
-                cash_after,
-                stock_before,
-                stock_after,
-                username,
-                description,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            "STOCK OUT",
-            product_id,
-            product["name"],
-            quantity,
-            purchase_price,
-            selling_price,
-            sales_amount,
-            cost_amount,
-            profit,
-            cash_before,
-            cash_after,
-            old_stock,
-            new_stock,
-            current_username(),
-            f"Sale. Profit: {profit:,.2f}",
-            user_id
-        ))
-
-        conn.execute("""
-            INSERT INTO history
-            (
-                product_id,
-                product_name,
-                action,
-                quantity,
-                previous_quantity,
-                new_quantity,
-                username,
-                owner_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            product_id,
-            product["name"],
-            "STOCK OUT",
-            quantity,
-            old_stock,
-            new_stock,
-            current_username(),
-            user_id
-        ))
-
-        conn.commit()
-
-    except Exception as error:
-
-        conn.rollback()
-        conn.close()
-
-        print(error)
-
-        return jsonify(
-            success=False,
-            message="Sale failed. No changes were saved."
-        ), 500
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        message=(
-            f"SALE SUCCESSFUL!\n\n"
-            f"Product: {product['name']}\n"
-            f"Quantity sold: {quantity}\n"
-            f"Sales: {sales_amount:,.2f} Frw\n"
-            f"Cost: {cost_amount:,.2f} Frw\n"
-            f"PROFIT: {profit:,.2f} Frw\n"
-            f"Remaining stock: {new_stock}\n"
-            f"New cash: {cash_after:,.2f} Frw"
-        )
-    )
-
-
-# =========================================================
-# HISTORY PAGE
-# =========================================================
-
-HISTORY_HTML = """
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Transaction History</title>
-
-<style>
-
-body {
-    font-family: Arial;
-    background: #f1f5f9;
-    padding: 25px;
-}
-
-.container {
-    max-width: 1500px;
-    margin: auto;
-}
-
-.table-box {
-    overflow-x: auto;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-}
-
-th,
-td {
-    padding: 12px;
-    border-bottom: 1px solid #ddd;
-    text-align: left;
-    white-space: nowrap;
-}
-
-th {
-    background: #0f172a;
-    color: white;
-}
-
-.in {
-    color: #16a34a;
-    font-weight: bold;
-}
-
-.out {
-    color: #dc2626;
-    font-weight: bold;
-}
-
-.profit {
-    color: #7c3aed;
-    font-weight: bold;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<a href="/dashboard">
-← Dashboard
-</a>
-
-<h1>
-🧾 My Transaction History
-</h1>
-
-<div class="table-box">
-
-<table>
-
-<thead>
-
-<tr>
-
-<th>ID</th>
-<th>Type</th>
-<th>Product</th>
-<th>Qty</th>
-<th>Purchase</th>
-<th>Selling</th>
-<th>Amount</th>
-<th>Cost</th>
-<th>Profit</th>
-<th>Stock Before</th>
-<th>Stock After</th>
-<th>Cash Before</th>
-<th>Cash After</th>
-<th>User</th>
-<th>Description</th>
-<th>Date</th>
-
-</tr>
-
-</thead>
-
-<tbody id="history">
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-<script>
-
-async function loadHistory() {
-
-    const response =
-        await fetch(
-            "/api/transactions"
-        );
-
-    const data =
-        await response.json();
-
-    const table =
-        document.getElementById(
-            "history"
-        );
-
-    table.innerHTML = "";
-
-    if(!data.success) {
-
-        alert(data.message);
-        return;
-
-    }
-
-    data.transactions.forEach(
-        t => {
-
-            const typeClass =
-                (
-                    t.transaction_type === "STOCK IN"
-                    ||
-                    t.transaction_type === "STOCK EDIT IN"
-                    ||
-                    t.transaction_type === "CASH IN"
-                )
-                ?
-                "in"
-                :
-                "out";
-
-            table.innerHTML += `
-
-            <tr>
-
-            <td>${t.id}</td>
-
-            <td class="${typeClass}">
-            ${t.transaction_type}
-            </td>
-
-            <td>
-            ${t.product_name || "-"}
-            </td>
-
-            <td>
-            ${t.quantity || "-"}
-            </td>
-
-            <td>
-            ${Number(
-                t.purchase_price || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${Number(
-                t.selling_price || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${Number(
-                t.amount || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${Number(
-                t.cost_amount || 0
-            ).toLocaleString()}
-            </td>
-
-            <td class="profit">
-            ${Number(
-                t.profit || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${t.stock_before || 0}
-            </td>
-
-            <td>
-            ${t.stock_after || 0}
-            </td>
-
-            <td>
-            ${Number(
-                t.cash_before || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${Number(
-                t.cash_after || 0
-            ).toLocaleString()}
-            </td>
-
-            <td>
-            ${t.username || "-"}
-            </td>
-
-            <td>
-            ${t.description || "-"}
-            </td>
-
-            <td>
-            ${t.created_at}
-            </td>
-
-            </tr>
-
-            `;
-
-        }
-    );
-}
-
-
-loadHistory();
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-@app.route("/history")
-def history_page():
-
-    if not logged_in():
-
-        return redirect("/")
-
-    if session.get("role") == "admin":
-
-        return redirect("/admin-dashboard")
-
-    return render_template_string(
-        HISTORY_HTML
-    )
-
-
-# =========================================================
-# TRANSACTIONS API
-# USER SEES ONLY HIS TRANSACTIONS
-# =========================================================
-
-@app.route("/api/transactions")
-@login_required
-def get_transactions():
-
-    conn = get_db()
-
-    transactions = conn.execute("""
-        SELECT *
-        FROM transactions
-        WHERE owner_id = ?
-        ORDER BY id DESC
-    """, (
-        current_user_id(),
-    )).fetchall()
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        transactions=[
-            dict(t)
-            for t in transactions
-        ]
-    )
-
-
-# =========================================================
-# OLD HISTORY API
-# USER SEES ONLY HIS HISTORY
-# =========================================================
-
-@app.route("/api/history")
-@login_required
-def get_history():
-
-    conn = get_db()
-
-    history = conn.execute("""
-        SELECT *
-        FROM history
-        WHERE owner_id = ?
-        ORDER BY id DESC
-    """, (
-        current_user_id(),
-    )).fetchall()
-
-    conn.close()
-
-    return jsonify(
-        success=True,
-        history=[
-            dict(h)
-            for h in history
-        ]
-    )
-
-
-# =========================================================
-# ADMIN DASHBOARD HTML
-# =========================================================
-
-ADMIN_DASHBOARD_HTML = """
-<!DOCTYPE html>
-
-<html>
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport"
-content="width=device-width, initial-scale=1.0">
-
-<title>Admin Dashboard</title>
-
-<style>
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: #f1f5f9;
-    color: #0f172a;
-}
-
-.navbar {
-    background: #020617;
-    color: white;
-    padding: 18px 30px;
-
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: center;
-}
-
-.brand {
-    font-size: 22px;
-    font-weight: bold;
-}
-
-.admin-badge {
-    background: #dc2626;
-    padding: 7px 12px;
-    border-radius: 7px;
-    font-size: 12px;
-    font-weight: bold;
-}
-
-.logout {
-    border: none;
-    background: #ef4444;
-    color: white;
-    padding: 10px 16px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-    margin-left: 10px;
-}
-
-.container {
-    max-width: 1500px;
-    margin: auto;
-    padding: 30px 20px;
-}
-
-.subtitle {
-    color: #64748b;
-    margin-bottom: 25px;
-}
-
-.warning {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 18px;
-    border-radius: 12px;
-    margin-bottom: 25px;
-}
-
-.cards {
-    display: grid;
-
-    grid-template-columns:
-        repeat(4, 1fr);
-
-    gap: 18px;
-}
-
-.card {
-    background: white;
-    padding: 22px;
-    border-radius: 15px;
-
-    box-shadow:
-        0 4px 20px
-        rgba(0,0,0,.06);
-}
-
-.title {
-    color: #64748b;
-    font-size: 13px;
-    font-weight: bold;
-    margin-bottom: 12px;
-}
-
-.number {
-    font-size: 28px;
-    font-weight: bold;
-}
-
-.blue {
-    color: #2563eb;
-}
-
-.green {
-    color: #16a34a;
-}
-
-.red {
-    color: #dc2626;
-}
-
-.purple {
-    color: #7c3aed;
-}
-
-.orange {
-    color: #ea580c;
-}
-
-.section {
-    background: white;
-
-    margin-top: 25px;
-
-    padding: 25px;
-
-    border-radius: 15px;
-
-    box-shadow:
-        0 4px 20px
-        rgba(0,0,0,.06);
-}
-
-.table-box {
-    overflow-x: auto;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-th,
-td {
-    padding: 13px;
-
-    border-bottom:
-        1px solid #e2e8f0;
-
-    text-align: left;
-
-    white-space: nowrap;
-}
-
-th {
-    background: #020617;
-    color: white;
-}
-
-.stock-in {
-    color: #16a34a;
-    font-weight: bold;
-}
-
-.stock-out {
-    color: #dc2626;
-    font-weight: bold;
-}
-
-.cash {
-    color: #2563eb;
-    font-weight: bold;
-}
-
-.user-name {
-    font-weight: bold;
-}
-
-@media(max-width:1000px) {
-
-    .cards {
-        grid-template-columns:
-            repeat(2, 1fr);
-    }
-
-}
-
-@media(max-width:600px) {
-
-    .cards {
-        grid-template-columns: 1fr;
-    }
-
-    .navbar {
-        padding: 15px;
-    }
-
-}
-
-</style>
-
-</head>
-
-<body>
-
-
-<div class="navbar">
-
-<div class="brand">
-
-👑 Admin Dashboard
-
-</div>
-
-<div>
-
-<span class="admin-badge">
-ADMIN ONLY
-</span>
-
-👤 {{ username }}
-
-<button
-class="logout"
-onclick="location.href='/logout'">
-
-LOGOUT
-
-</button>
-
-</div>
-
-</div>
-
-
-<div class="container">
-
-
-<h1>
-Welcome Admin 👑
-</h1>
-
-
-<div class="subtitle">
-
-Monitor what users are doing
-in the Stock Management System.
-
-</div>
-
-
-<div class="warning">
-
-<strong>
-🔐 PRIVATE ADMIN AREA
-</strong>
-
-<br><br>
-
-Only the administrator can access
-this dashboard.
-
-Users cannot see this dashboard
-or admin activities.
-
-</div>
-
-
-<div class="cards">
-
-
-<div class="card">
-
-<div class="title">
-👥 TOTAL USERS
-</div>
-
-<div
-id="totalUsers"
-class="number blue">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-📦 TOTAL PRODUCTS
-</div>
-
-<div
-id="totalProducts"
-class="number orange">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-📊 TOTAL STOCK
-</div>
-
-<div
-id="totalStock"
-class="number purple">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-💰 USERS CASH
-</div>
-
-<div
-id="totalCash"
-class="number green">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-💵 TOTAL SALES
-</div>
-
-<div
-id="totalSales"
-class="number blue">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-📈 TOTAL PROFIT
-</div>
-
-<div
-id="totalProfit"
-class="number purple">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-📥 STOCK IN
-</div>
-
-<div
-id="stockIn"
-class="number green">
-
-0
-
-</div>
-
-</div>
-
-
-<div class="card">
-
-<div class="title">
-📤 STOCK OUT
-</div>
-
-<div
-id="stockOut"
-class="number red">
-
-0
-
-</div>
-
-</div>
-
-
-</div>
-
-
-<div class="section">
-
-<h2>
-👥 Registered Users
-</h2>
-
-<div class="table-box">
-
-<table>
-
-<thead>
-
-<tr>
-
-<th>ID</th>
-
-<th>Username</th>
-
-<th>Role</th>
-
-<th>Created</th>
-
-</tr>
-
-</thead>
-
-<tbody id="users">
-
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-
-<div class="section">
-
-<h2>
-👀 User Activity
-</h2>
-
-<p>
-
-Here the admin sees activities
-performed by normal users.
-
-Admin activities are excluded.
-
-</p>
-
-
-<div class="table-box">
-
-<table>
-
-<thead>
-
-<tr>
-
-<th>ID</th>
-
-<th>User</th>
-
-<th>Action</th>
-
-<th>Product</th>
-
-<th>Quantity</th>
-
-<th>Amount</th>
-
-<th>Profit</th>
-
-<th>Description</th>
-
-<th>Date</th>
-
-</tr>
-
-</thead>
-
-<tbody id="activity">
-
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-
-</div>
-
-
-<script>
-
-
-async function loadAdminDashboard() {
-
-    try {
+    try{
 
         const response =
             await fetch(
-                "/api/admin-dashboard"
+                "/api/products/" +
+                id +
+                "/stock",
+                {
+                    method:"PUT",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        quantity:quantity,
+                        reason:reason
+
+                    })
+                }
             );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                "HTTP " +
-                response.status
-            );
-
-        }
 
 
         const data =
             await response.json();
 
 
-        if (!data.success) {
+        alert(data.message);
 
-            throw new Error(
-                data.message
-            );
+
+        if(data.success){
+
+            loadProducts();
 
         }
 
+    }catch(error){
 
-        document.getElementById(
-            "totalUsers"
-        ).textContent =
-            data.total_users;
-
-
-        document.getElementById(
-            "totalProducts"
-        ).textContent =
-            data.total_products;
-
-
-        document.getElementById(
-            "totalStock"
-        ).textContent =
-            data.total_stock;
-
-
-        document.getElementById(
-            "totalCash"
-        ).textContent =
-            Number(
-                data.total_cash
-            ).toLocaleString();
-
-
-        document.getElementById(
-            "totalSales"
-        ).textContent =
-            Number(
-                data.total_sales
-            ).toLocaleString();
-
-
-        document.getElementById(
-            "totalProfit"
-        ).textContent =
-            Number(
-                data.total_profit
-            ).toLocaleString();
-
-
-        document.getElementById(
-            "stockIn"
-        ).textContent =
-            data.stock_in;
-
-
-        document.getElementById(
-            "stockOut"
-        ).textContent =
-            data.stock_out;
-
-
-        loadUsers(
-            data.users
-        );
-
-
-        loadActivity(
-            data.activities
-        );
-
-    }
-
-    catch(error) {
-
-        console.error(
-            "Admin dashboard error:",
-            error
-        );
+        console.error(error);
 
         alert(
-            "Could not load admin dashboard."
+            "Stock update failed."
         );
 
     }
@@ -4923,660 +1641,3367 @@ async function loadAdminDashboard() {
 }
 
 
-function loadUsers(users) {
+async function deleteProduct(id){
 
-    const table =
-        document.getElementById(
-            "users"
-        );
+    if(
+        !confirm(
+            "Delete this product? Stock must be zero."
+        )
+    ){
 
-    table.innerHTML = "";
+        return;
+    }
 
 
-    users.forEach(
-        user => {
+    try{
 
-            table.innerHTML += `
+        const response =
+            await fetch(
+                "/api/products/" + id,
+                {
+                    method:"DELETE"
+                }
+            );
 
-            <tr>
 
-                <td>
-                    ${user.id}
-                </td>
+        const data =
+            await response.json();
 
-                <td class="user-name">
-                    ${user.username}
-                </td>
 
-                <td>
-                    ${user.role}
-                </td>
+        alert(data.message);
 
-                <td>
-                    ${user.created_at}
-                </td>
 
-            </tr>
+        if(data.success){
 
-            `;
+            loadProducts();
 
         }
-    );
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not delete product."
+        );
+
+    }
 
 }
 
 
-function loadActivity(activities) {
-
-    const table =
-        document.getElementById(
-            "activity"
-        );
-
-    table.innerHTML = "";
-
-
-    activities.forEach(
-        item => {
-
-            let actionClass = "";
-
-
-            if(
-                item.transaction_type ===
-                "STOCK IN"
-            ) {
-
-                actionClass =
-                    "stock-in";
-
-            }
-
-            else if(
-                item.transaction_type ===
-                "STOCK OUT"
-            ) {
-
-                actionClass =
-                    "stock-out";
-
-            }
-
-            else if(
-                item.transaction_type.includes(
-                    "CASH"
-                )
-            ) {
-
-                actionClass =
-                    "cash";
-
-            }
-
-
-            table.innerHTML += `
-
-            <tr>
-
-                <td>
-                    ${item.id}
-                </td>
-
-                <td class="user-name">
-                    ${item.username}
-                </td>
-
-                <td class="${actionClass}">
-                    ${item.transaction_type}
-                </td>
-
-                <td>
-                    ${item.product_name || "-"}
-                </td>
-
-                <td>
-                    ${item.quantity || "-"}
-                </td>
-
-                <td>
-                    ${Number(
-                        item.amount || 0
-                    ).toLocaleString()}
-                </td>
-
-                <td>
-                    ${Number(
-                        item.profit || 0
-                    ).toLocaleString()}
-                </td>
-
-                <td>
-                    ${item.description || "-"}
-                </td>
-
-                <td>
-                    ${item.created_at}
-                </td>
-
-            </tr>
-
-            `;
-
-        }
-    );
-
-}
-
-
-loadAdminDashboard();
-
-
-setInterval(
-    loadAdminDashboard,
-    5000
-);
-
+loadProducts();
 
 </script>
 
 </body>
-
 </html>
 """
 
 
-# =========================================================
-# ADMIN DASHBOARD PAGE
-# ADMIN ONLY
-# =========================================================
+# ============================================================
+# STOCK MOVEMENT PAGE
+# ============================================================
 
-@app.route("/admin-dashboard")
-def admin_dashboard():
+MOVEMENT_HTML = """
+<!doctype html>
+<html>
 
-    if not logged_in():
+<head>
 
-        return redirect("/")
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 
-    if session.get("role") != "admin":
+<title>{{ title }}</title>
 
-        return redirect("/dashboard")
+<style>
+{{ css }}
+</style>
 
-    return render_template_string(
-        ADMIN_DASHBOARD_HTML,
-        username=session.get("username")
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+📦 Stock Management
+</div>
+
+<a class="btn" href="/dashboard">
+← Dashboard
+</a>
+
+</div>
+
+
+<div class="container">
+
+<div
+    class="box"
+    style="max-width:700px;margin:auto"
+>
+
+<h1>
+{{ icon }} {{ title }}
+</h1>
+
+
+<label>
+Product
+</label>
+
+<select
+    id="movementProduct"
+    class="input"
+>
+
+<option value="">
+Select product
+</option>
+
+</select>
+
+
+<label>
+Quantity
+</label>
+
+<input
+    id="movementQuantity"
+    class="input"
+    type="number"
+    min="1"
+    placeholder="Enter quantity"
+>
+
+
+<button
+    type="button"
+    class="btn {{ color }}"
+    style="width:100%;margin-top:20px"
+    onclick="submitMovement()"
+>
+
+{{ button }}
+
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+const movementEndpoint =
+    "{{ endpoint }}";
+
+
+async function loadMovementProducts(){
+
+    try{
+
+        const response =
+            await fetch("/api/products");
+
+        const data =
+            await response.json();
+
+
+        if(!data.success){
+
+            alert(data.message);
+
+            return;
+        }
+
+
+        const select =
+            document.getElementById(
+                "movementProduct"
+            );
+
+
+        select.innerHTML =
+            '<option value="">Select product</option>';
+
+
+        data.products.forEach(function(product){
+
+            const option =
+                document.createElement("option");
+
+            option.value =
+                product.id;
+
+            option.textContent =
+                product.name +
+                " — Stock: " +
+                product.quantity +
+                " — Buy: " +
+                Number(
+                    product.purchase_price
+                ).toLocaleString();
+
+            select.appendChild(option);
+
+        });
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not load products."
+        );
+
+    }
+
+}
+
+
+async function submitMovement(){
+
+    const productId =
+        Number(
+            document
+            .getElementById(
+                "movementProduct"
+            )
+            .value
+        );
+
+
+    const quantity =
+        Number(
+            document
+            .getElementById(
+                "movementQuantity"
+            )
+            .value
+        );
+
+
+    if(
+        !productId ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+    ){
+
+        alert(
+            "Enter valid information."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                movementEndpoint,
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        product_id:productId,
+                        quantity:quantity
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            document.getElementById(
+                "movementQuantity"
+            ).value = "";
+
+            await loadMovementProducts();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Transaction failed."
+        );
+
+    }
+
+}
+
+
+loadMovementProducts();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# CASH PAGE
+# ============================================================
+
+CASH_HTML = """
+<!doctype html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Cash</title>
+
+<style>
+{{ css }}
+</style>
+
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+💰 Cash Management
+</div>
+
+<a class="btn" href="/dashboard">
+← Dashboard
+</a>
+
+</div>
+
+
+<div class="container">
+
+
+<div class="cards">
+
+<div class="card">
+
+<div class="title">
+CURRENT CASH
+</div>
+
+<div id="cashBalance" class="num">
+0
+</div>
+
+</div>
+
+</div>
+
+
+<div
+    class="box"
+    style="max-width:700px;margin-top:25px"
+>
+
+<h2>
+Cash Transaction
+</h2>
+
+
+<select
+    id="cashType"
+    class="input"
+>
+
+<option value="CASH IN">
+CASH IN
+</option>
+
+<option value="CASH OUT">
+CASH OUT
+</option>
+
+</select>
+
+
+<label>
+Amount
+</label>
+
+<input
+    id="cashAmount"
+    class="input"
+    type="number"
+    min="0.01"
+    step="0.01"
+>
+
+
+<label>
+Description
+</label>
+
+<input
+    id="cashDescription"
+    class="input"
+    placeholder="Reason / description"
+>
+
+
+<button
+    type="button"
+    class="btn green"
+    onclick="saveCash()"
+>
+
+SAVE TRANSACTION
+
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+
+function money(value){
+
+    return Number(value || 0).toLocaleString();
+
+}
+
+
+async function loadCash(){
+
+    try{
+
+        const response =
+            await fetch("/api/cash");
+
+        const data =
+            await response.json();
+
+
+        document.getElementById(
+            "cashBalance"
+        ).textContent =
+            money(data.balance);
+
+
+    }catch(error){
+
+        console.error(error);
+
+    }
+
+}
+
+
+async function saveCash(){
+
+    const type =
+        document.getElementById(
+            "cashType"
+        ).value;
+
+
+    const amount =
+        Number(
+            document.getElementById(
+                "cashAmount"
+            ).value
+        );
+
+
+    const description =
+        document.getElementById(
+            "cashDescription"
+        ).value
+        .trim();
+
+
+    if(
+        !Number.isFinite(amount) ||
+        amount <= 0
+    ){
+
+        alert(
+            "Enter a valid amount."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/cash",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        transaction_type:type,
+                        amount:amount,
+                        description:
+                            description
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            document.getElementById(
+                "cashAmount"
+            ).value = "";
+
+            document.getElementById(
+                "cashDescription"
+            ).value = "";
+
+            loadCash();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Cash transaction failed."
+        );
+
+    }
+
+}
+
+
+loadCash();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# HISTORY PAGE
+# ============================================================
+from flask import Flask, request, jsonify, session, redirect, render_template_string
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+app = Flask(__name__)
+
+app.secret_key = os.getenv(
+    "SECRET_KEY",
+    "CHANGE-THIS-STOCK-SECRET-KEY"
+)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+def get_db():
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Set your PostgreSQL connection string first."
+        )
+
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=RealDictCursor
     )
 
 
-# =========================================================
-# ADMIN DASHBOARD API
-#
-# ADMIN SEES ONLY NON-ADMIN USERS
-# ADMIN ACTIVITIES ARE NOT INCLUDED
-# =========================================================
-
-@app.route("/api/admin-dashboard")
-@admin_required
-def admin_dashboard_data():
-
+def init_database():
     conn = get_db()
 
     try:
+        with conn.cursor() as cur:
 
-        # -------------------------------------------------
-        # TOTAL NORMAL USERS
-        # -------------------------------------------------
+            # USERS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'user',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        total_users = conn.execute("""
-            SELECT COUNT(*)
-            FROM users
-            WHERE role != 'admin'
-        """).fetchone()[0]
+            # PRODUCTS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0
+                        CHECK (quantity >= 0),
+                    purchase_price NUMERIC(14,2) NOT NULL DEFAULT 0
+                        CHECK (purchase_price >= 0),
+                    selling_price NUMERIC(14,2) NOT NULL DEFAULT 0
+                        CHECK (selling_price >= 0),
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(owner_id, name)
+                )
+            """)
 
+            # CASH
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cash_account (
+                    id SERIAL PRIMARY KEY,
+                    balance NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    owner_id INTEGER UNIQUE NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
 
-        # -------------------------------------------------
-        # TOTAL PRODUCTS OF NORMAL USERS
-        # -------------------------------------------------
+            # TRANSACTIONS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id SERIAL PRIMARY KEY,
+                    transaction_type VARCHAR(50) NOT NULL,
+                    product_id INTEGER
+                        REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200),
+                    quantity INTEGER,
+                    purchase_price NUMERIC(14,2) DEFAULT 0,
+                    selling_price NUMERIC(14,2) DEFAULT 0,
+                    amount NUMERIC(16,2) DEFAULT 0,
+                    cost_amount NUMERIC(16,2) DEFAULT 0,
+                    profit NUMERIC(16,2) DEFAULT 0,
+                    cash_before NUMERIC(16,2) DEFAULT 0,
+                    cash_after NUMERIC(16,2) DEFAULT 0,
+                    stock_before INTEGER,
+                    stock_after INTEGER,
+                    username VARCHAR(100),
+                    description TEXT,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        total_products = conn.execute("""
-            SELECT COUNT(*)
-            FROM products
-            WHERE owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
+            # HISTORY
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id SERIAL PRIMARY KEY,
+                    product_id INTEGER
+                        REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200) NOT NULL,
+                    action VARCHAR(50) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    previous_quantity INTEGER NOT NULL DEFAULT 0,
+                    new_quantity INTEGER NOT NULL DEFAULT 0,
+                    username VARCHAR(100) NOT NULL,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
+        conn.commit()
+        create_default_admin(conn)
 
-        # -------------------------------------------------
-        # TOTAL STOCK OF NORMAL USERS
-        # -------------------------------------------------
-
-        total_stock = conn.execute("""
-            SELECT COALESCE(
-                SUM(quantity),
-                0
-            )
-            FROM products
-            WHERE owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # TOTAL CASH OF NORMAL USERS
-        # -------------------------------------------------
-
-        total_cash = conn.execute("""
-            SELECT COALESCE(
-                SUM(balance),
-                0
-            )
-            FROM cash_account
-            WHERE owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # TOTAL SALES OF NORMAL USERS
-        # -------------------------------------------------
-
-        total_sales = conn.execute("""
-            SELECT COALESCE(
-                SUM(amount),
-                0
-            )
-            FROM transactions
-            WHERE transaction_type = 'STOCK OUT'
-            AND owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # TOTAL PROFIT OF NORMAL USERS
-        # -------------------------------------------------
-
-        total_profit = conn.execute("""
-            SELECT COALESCE(
-                SUM(profit),
-                0
-            )
-            FROM transactions
-            WHERE transaction_type = 'STOCK OUT'
-            AND owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # STOCK IN COUNT
-        # -------------------------------------------------
-
-        stock_in = conn.execute("""
-            SELECT COUNT(*)
-            FROM transactions
-            WHERE transaction_type = 'STOCK IN'
-            AND owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # STOCK OUT COUNT
-        # -------------------------------------------------
-
-        stock_out = conn.execute("""
-            SELECT COUNT(*)
-            FROM transactions
-            WHERE transaction_type = 'STOCK OUT'
-            AND owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-        """).fetchone()[0]
-
-
-        # -------------------------------------------------
-        # NORMAL USERS
-        # ADMIN IS NOT SHOWN HERE
-        # -------------------------------------------------
-
-        users = conn.execute("""
-            SELECT
-                id,
-                username,
-                role,
-                created_at
-            FROM users
-            WHERE role != 'admin'
-            ORDER BY id DESC
-        """).fetchall()
-
-
-        # -------------------------------------------------
-        # USER ACTIVITIES
-        #
-        # IMPORTANT:
-        #
-        # Only transactions belonging to normal users
-        # are returned.
-        #
-        # Therefore ADMIN ACTIVITIES CANNOT APPEAR.
-        # -------------------------------------------------
-
-        activities = conn.execute("""
-            SELECT
-                id,
-                transaction_type,
-                product_id,
-                product_name,
-                quantity,
-                purchase_price,
-                selling_price,
-                amount,
-                cost_amount,
-                profit,
-                cash_before,
-                cash_after,
-                stock_before,
-                stock_after,
-                username,
-                description,
-                created_at
-            FROM transactions
-            WHERE owner_id IN (
-                SELECT id
-                FROM users
-                WHERE role != 'admin'
-            )
-            ORDER BY id DESC
-            LIMIT 200
-        """).fetchall()
-
-
+    finally:
         conn.close()
 
 
-        return jsonify(
+def create_default_admin(conn):
 
-            success=True,
+    with conn.cursor() as cur:
 
-            total_users=total_users,
-
-            total_products=total_products,
-
-            total_stock=total_stock,
-
-            total_cash=round(
-                float(total_cash),
-                2
-            ),
-
-            total_sales=round(
-                float(total_sales),
-                2
-            ),
-
-            total_profit=round(
-                float(total_profit),
-                2
-            ),
-
-            stock_in=stock_in,
-
-            stock_out=stock_out,
-
-            users=[
-                dict(user)
-                for user in users
-            ],
-
-            activities=[
-                dict(activity)
-                for activity in activities
-            ]
-
+        cur.execute(
+            "SELECT id FROM users WHERE username=%s",
+            ("admin",)
         )
 
+        row = cur.fetchone()
 
-    except Exception as error:
+        if row:
+            admin_id = row["id"]
 
-        conn.close()
-
-        print(
-            "ADMIN DASHBOARD ERROR:",
-            error
-        )
-
-        return jsonify(
-            success=False,
-            message="Could not load admin dashboard."
-        ), 500
-
-
-# =========================================================
-# DEFAULT ADMIN
-# =========================================================
-
-def create_default_admin():
-
-    conn = get_db()
-
-    user = conn.execute("""
-        SELECT *
-        FROM users
-        WHERE username = ?
-    """, (
-        "admin",
-    )).fetchone()
-
-    if not user:
-
-        cursor = conn.execute("""
-            INSERT INTO users
-            (
-                username,
-                password,
-                role
+            cur.execute(
+                "UPDATE users SET role='admin' WHERE id=%s",
+                (admin_id,)
             )
-            VALUES (?, ?, ?)
-        """, (
-            "admin",
-            generate_password_hash(
-                "admin123"
-            ),
-            "admin"
-        ))
 
-        admin_id = cursor.lastrowid
+        else:
 
-        conn.execute("""
-            INSERT INTO cash_account
-            (
-                balance,
-                owner_id
-            )
-            VALUES (?, ?)
-        """, (
-            0,
-            admin_id
-        ))
-
-        conn.commit()
-
-        print()
-        print("Default account created:")
-        print("Username: admin")
-        print("Password: admin123")
-        print()
-
-    else:
-
-        # Make sure admin role remains admin.
-        conn.execute("""
-            UPDATE users
-            SET role = 'admin'
-            WHERE username = 'admin'
-        """)
-
-        ensure_cash_account(
-            conn,
-            user["id"]
-        )
-
-        conn.commit()
-
-
-    # -----------------------------------------------------
-    # MIGRATION:
-    #
-    # Old records without owner_id
-    # belong to admin.
-    # -----------------------------------------------------
-
-    admin = conn.execute("""
-        SELECT id
-        FROM users
-        WHERE username = ?
-    """, (
-        "admin",
-    )).fetchone()
-
-
-    if admin:
-
-        admin_id = admin["id"]
-
-
-        conn.execute("""
-            UPDATE products
-            SET owner_id = ?
-            WHERE owner_id IS NULL
-        """, (
-            admin_id,
-        ))
-
-
-        conn.execute("""
-            UPDATE transactions
-            SET owner_id = ?
-            WHERE owner_id IS NULL
-        """, (
-            admin_id,
-        ))
-
-
-        conn.execute("""
-            UPDATE history
-            SET owner_id = ?
-            WHERE owner_id IS NULL
-        """, (
-            admin_id,
-        ))
-
-
-        # Old cash account without owner
-        old_cash = conn.execute("""
-            SELECT *
-            FROM cash_account
-            WHERE owner_id IS NULL
-            ORDER BY id
-            LIMIT 1
-        """).fetchone()
-
-
-        if old_cash:
-
-            conn.execute("""
-                UPDATE cash_account
-                SET owner_id = ?
-                WHERE id = ?
+            cur.execute("""
+                INSERT INTO users(username, password, role)
+                VALUES(%s, %s, 'admin')
+                RETURNING id
             """, (
-                admin_id,
-                old_cash["id"]
+                "admin",
+                generate_password_hash("admin123")
             ))
 
+            admin_id = cur.fetchone()["id"]
 
+        cur.execute("""
+            INSERT INTO cash_account(balance, owner_id)
+            VALUES(0, %s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (admin_id,))
+
+    conn.commit()
+
+
+def ensure_cash_account(conn, user_id):
+
+    with conn.cursor() as cur:
+
+        cur.execute("""
+            INSERT INTO cash_account(balance, owner_id)
+            VALUES(0, %s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (user_id,))
+
+        cur.execute("""
+            SELECT *
+            FROM cash_account
+            WHERE owner_id=%s
+            FOR UPDATE
+        """, (user_id,))
+
+        return cur.fetchone()
+
+
+# ============================================================
+# SESSION
+# ============================================================
+
+def logged_in():
+    return "user_id" in session
+
+
+def current_user_id():
+    return session.get("user_id")
+
+
+def current_username():
+    return session.get("username")
+
+
+def is_admin():
+    return session.get("role") == "admin"
+
+
+def login_required(view):
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+
+        if not logged_in():
+
+            if request.path.startswith("/api/") or request.is_json:
+                return jsonify(
+                    success=False,
+                    message="Not logged in."
+                ), 401
+
+            return redirect("/")
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(view):
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+
+        if not logged_in():
+            return jsonify(
+                success=False,
+                message="Not logged in."
+            ), 401
+
+        if not is_admin():
+            return jsonify(
+                success=False,
+                message="Admin permission required."
+            ), 403
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+# ============================================================
+# CSS
+# ============================================================
+
+BASE_CSS = """
+*{
+    box-sizing:border-box;
+}
+
+body{
+    font-family:Arial,sans-serif;
+    background:#f1f5f9;
+    color:#0f172a;
+    margin:0;
+}
+
+.nav{
+    background:#020617;
+    color:#fff;
+    padding:16px 28px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+}
+
+.brand{
+    font-size:21px;
+    font-weight:700;
+}
+
+.nav a{
+    color:#fff;
+    text-decoration:none;
+}
+
+.container{
+    max-width:1500px;
+    margin:auto;
+    padding:28px 20px;
+}
+
+.top{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:15px;
+    margin-bottom:24px;
+}
+
+.muted{
+    color:#64748b;
+}
+
+.btn{
+    display:inline-block;
+    border:0;
+    border-radius:8px;
+    padding:11px 16px;
+    background:#2563eb;
+    color:#fff;
+    text-decoration:none;
+    cursor:pointer;
+    font-weight:700;
+}
+
+.btn:hover{
+    opacity:.88;
+}
+
+.green{
+    background:#16a34a;
+}
+
+.red{
+    background:#ef4444;
+}
+
+.purple{
+    background:#7c3aed;
+}
+
+.dark{
+    background:#0f172a;
+}
+
+.box,
+.card,
+.section{
+    background:#fff;
+    padding:22px;
+    border-radius:15px;
+    box-shadow:0 5px 25px rgba(0,0,0,.06);
+}
+
+.box{
+    margin-bottom:22px;
+}
+
+.cards{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+}
+
+.card .title{
+    color:#64748b;
+    font-size:13px;
+    font-weight:bold;
+}
+
+.num{
+    font-size:27px;
+    font-weight:700;
+    margin-top:10px;
+}
+
+.form-grid{
+    display:grid;
+    grid-template-columns:2fr 1fr 1fr 1fr auto;
+    gap:12px;
+}
+
+.input,
+select{
+    width:100%;
+    padding:12px;
+    border:1px solid #cbd5e1;
+    border-radius:8px;
+    font-size:15px;
+}
+
+label{
+    font-weight:700;
+    display:block;
+    margin:10px 0 7px;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    background:#fff;
+}
+
+th,
+td{
+    padding:12px;
+    border-bottom:1px solid #e2e8f0;
+    text-align:left;
+    white-space:nowrap;
+}
+
+th{
+    background:#020617;
+    color:#fff;
+}
+
+.table-wrap{
+    overflow-x:auto;
+}
+
+.profit{
+    color:#16a34a;
+    font-weight:700;
+}
+
+.loss{
+    color:#dc2626;
+    font-weight:700;
+}
+
+.menu{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:16px;
+    margin-top:25px;
+}
+
+.menu a{
+    background:#fff;
+    padding:20px;
+    border-radius:14px;
+    text-decoration:none;
+    color:#0f172a;
+    font-weight:700;
+    text-align:center;
+    box-shadow:0 5px 20px rgba(0,0,0,.06);
+}
+
+.menu a:hover{
+    background:#2563eb;
+    color:#fff;
+}
+
+.search{
+    margin-bottom:18px;
+}
+
+.auth{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+    background:linear-gradient(135deg,#020617,#2563eb);
+}
+
+.auth-box{
+    width:100%;
+    max-width:440px;
+    background:#fff;
+    padding:32px;
+    border-radius:18px;
+    box-shadow:0 15px 45px rgba(0,0,0,.2);
+}
+
+.auth-box h1{
+    text-align:center;
+}
+
+.auth-box .input{
+    margin:8px 0 12px;
+}
+
+.auth-box button{
+    width:100%;
+    margin-top:8px;
+}
+
+.message{
+    padding:10px;
+    border-radius:8px;
+    margin:10px 0;
+    display:none;
+}
+
+.small{
+    font-size:13px;
+}
+
+.warning{
+    background:#fee2e2;
+    color:#991b1b;
+    padding:16px;
+    border-radius:12px;
+    margin-bottom:20px;
+}
+
+@media(max-width:1100px){
+
+    .cards{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .menu{
+        grid-template-columns:repeat(3,1fr);
+    }
+
+    .form-grid{
+        grid-template-columns:1fr 1fr;
+    }
+}
+
+@media(max-width:650px){
+
+    .cards,
+    .menu,
+    .form-grid{
+        grid-template-columns:1fr;
+    }
+
+    .nav{
+        padding:14px;
+        flex-wrap:wrap;
+    }
+
+    .container{
+        padding:18px 12px;
+    }
+}
+"""
+
+
+# ============================================================
+# AUTH PAGE
+# ============================================================
+
+AUTH_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Management</title>
+<style>{{ css }}</style>
+</head>
+
+<body>
+
+<div class="auth">
+
+<div class="auth-box">
+
+<h1>📦 Stock Management</h1>
+
+<p class="muted" style="text-align:center">
+Login or create your account
+</p>
+
+<div id="msg" class="message"></div>
+
+<input
+    id="username"
+    class="input"
+    placeholder="Username"
+    autocomplete="username"
+>
+
+<input
+    id="password"
+    class="input"
+    type="password"
+    placeholder="Password"
+    autocomplete="current-password"
+>
+
+<button
+    type="button"
+    class="btn"
+    onclick="loginUser()"
+>
+LOGIN
+</button>
+
+<hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0">
+
+<h3>Create account</h3>
+
+<input
+    id="rusername"
+    class="input"
+    placeholder="New username"
+>
+
+<input
+    id="rpassword"
+    class="input"
+    type="password"
+    placeholder="New password"
+>
+
+<button
+    type="button"
+    class="btn green"
+    onclick="registerUser()"
+>
+REGISTER
+</button>
+
+<p class="small muted">
+Password must contain at least 4 characters.
+</p>
+
+</div>
+</div>
+
+
+<script>
+
+function showMessage(text, ok=false){
+
+    const message = document.getElementById("msg");
+
+    message.textContent = text;
+    message.style.display = "block";
+
+    if(ok){
+
+        message.style.background = "#dcfce7";
+        message.style.color = "#166534";
+
+    }else{
+
+        message.style.background = "#fee2e2";
+        message.style.color = "#991b1b";
+
+    }
+}
+
+
+async function loginUser(){
+
+    const username = document
+        .getElementById("username")
+        .value
+        .trim();
+
+    const password = document
+        .getElementById("password")
+        .value;
+
+    if(!username || !password){
+
+        showMessage("Enter username and password.");
+        return;
+    }
+
+    try{
+
+        const response = await fetch("/login", {
+
+            method:"POST",
+
+            headers:{
+                "Content-Type":"application/json"
+            },
+
+            body:JSON.stringify({
+                username:username,
+                password:password
+            })
+
+        });
+
+        const data = await response.json();
+
+        if(data.success){
+
+            window.location.href = data.redirect;
+
+        }else{
+
+            showMessage(data.message);
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        showMessage(
+            "Connection error. Please try again."
+        );
+
+    }
+}
+
+
+async function registerUser(){
+
+    const username = document
+        .getElementById("rusername")
+        .value
+        .trim();
+
+    const password = document
+        .getElementById("rpassword")
+        .value;
+
+    if(!username || !password){
+
+        showMessage("Enter username and password.");
+
+        return;
+    }
+
+    try{
+
+        const response = await fetch("/register", {
+
+            method:"POST",
+
+            headers:{
+                "Content-Type":"application/json"
+            },
+
+            body:JSON.stringify({
+                username:username,
+                password:password
+            })
+
+        });
+
+        const data = await response.json();
+
+        showMessage(data.message, data.success);
+
+        if(data.success){
+
+            document.getElementById("username").value = username;
+
+            document.getElementById("password").value = password;
+
+            document.getElementById("rusername").value = "";
+
+            document.getElementById("rpassword").value = "";
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        showMessage(
+            "Connection error. Please try again."
+        );
+
+    }
+}
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
+
+DASHBOARD_HTML = """
+<!doctype html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Dashboard</title>
+
+<style>
+{{ css }}
+</style>
+
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+📦 Stock Management
+</div>
+
+<div>
+👤 {{ username }}
+
+<a class="btn red" href="/logout">
+LOGOUT
+</a>
+
+</div>
+
+</div>
+
+
+<div class="container">
+
+<div class="top">
+
+<div>
+
+<h1>
+Welcome, {{ username }} 👋
+</h1>
+
+<p class="muted">
+Manage stock, cash, sales and profit.
+</p>
+
+</div>
+
+</div>
+
+
+<div class="cards">
+
+<div class="card">
+<div class="title">PRODUCTS</div>
+<div id="productsCount" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">TOTAL STOCK</div>
+<div id="stockCount" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">STOCK VALUE</div>
+<div id="stockValue" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">CASH BALANCE</div>
+<div id="cashBalance" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">POTENTIAL PROFIT</div>
+<div id="potentialProfit" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">TOTAL SALES</div>
+<div id="totalSales" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">TOTAL PROFIT</div>
+<div id="totalProfit" class="num">0</div>
+</div>
+
+<div class="card">
+<div class="title">LOW STOCK</div>
+<div id="lowStock" class="num">0</div>
+</div>
+
+</div>
+
+
+<div class="menu">
+
+<a href="/products">
+📦 Products
+</a>
+
+<a href="/stock-in">
+➕ Stock In
+</a>
+
+<a href="/stock-out">
+🛒 Stock Out
+</a>
+
+<a href="/cash">
+💰 Cash
+</a>
+
+<a href="/history">
+📜 History
+</a>
+
+</div>
+
+</div>
+
+
+<script>
+
+function money(value){
+
+    return Number(value || 0).toLocaleString();
+}
+
+
+async function loadDashboard(){
+
+    try{
+
+        const response =
+            await fetch("/dashboard-data");
+
+        const data =
+            await response.json();
+
+        if(!data.success){
+
+            console.error(data.message);
+
+            return;
+        }
+
+        document.getElementById("productsCount")
+            .textContent = data.total_products;
+
+        document.getElementById("stockCount")
+            .textContent = data.total_stock;
+
+        document.getElementById("stockValue")
+            .textContent = money(data.stock_value);
+
+        document.getElementById("cashBalance")
+            .textContent = money(data.cash_balance);
+
+        document.getElementById("potentialProfit")
+            .textContent = money(data.potential_profit);
+
+        document.getElementById("totalSales")
+            .textContent = money(data.total_sales);
+
+        document.getElementById("totalProfit")
+            .textContent = money(data.total_profit);
+
+        document.getElementById("lowStock")
+            .textContent = data.low_stock;
+
+    }catch(error){
+
+        console.error(
+            "Dashboard error:",
+            error
+        );
+
+    }
+}
+
+
+loadDashboard();
+
+setInterval(
+    loadDashboard,
+    5000
+);
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# PRODUCTS PAGE
+# ============================================================
+
+PRODUCTS_HTML = """
+<!doctype html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Products</title>
+
+<style>
+{{ css }}
+</style>
+
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+📦 Products
+</div>
+
+<a class="btn" href="/dashboard">
+← Dashboard
+</a>
+
+</div>
+
+
+<div class="container">
+
+
+<div class="box">
+
+<h2>
+➕ Add Product
+</h2>
+
+<div class="form-grid">
+
+<input
+    id="productName"
+    class="input"
+    placeholder="Product name"
+>
+
+<input
+    id="productQuantity"
+    class="input"
+    type="number"
+    min="0"
+    placeholder="Initial stock"
+>
+
+<input
+    id="purchasePrice"
+    class="input"
+    type="number"
+    min="0"
+    step="0.01"
+    placeholder="Purchase price"
+>
+
+<input
+    id="sellingPrice"
+    class="input"
+    type="number"
+    min="0"
+    step="0.01"
+    placeholder="Selling price"
+>
+
+<button
+    type="button"
+    class="btn green"
+    onclick="addProduct()"
+>
+ADD
+</button>
+
+</div>
+
+<p class="muted">
+Initial stock does not change cash.
+Use Stock In when purchasing stock.
+</p>
+
+</div>
+
+
+<input
+    id="productSearch"
+    class="input search"
+    placeholder="🔎 Search..."
+    oninput="filterProducts()"
+>
+
+
+<div class="table-wrap">
+
+<table>
+
+<thead>
+
+<tr>
+
+<th>ID</th>
+<th>Product</th>
+<th>Stock</th>
+<th>Purchase</th>
+<th>Selling</th>
+<th>Profit/Unit</th>
+<th>Action</th>
+
+</tr>
+
+</thead>
+
+<tbody id="productRows">
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+<script>
+
+let productsList = [];
+
+
+function escapeHTML(value){
+
+    return String(value ?? "")
+        .replace(/[&<>"']/g, function(char){
+
+            const map = {
+
+                "&":"&amp;",
+                "<":"&lt;",
+                ">":"&gt;",
+                '"':"&quot;",
+                "'":"&#39;"
+
+            };
+
+            return map[char];
+
+        });
+
+}
+
+
+function money(value){
+
+    return Number(value || 0).toLocaleString();
+}
+
+
+async function loadProducts(){
+
+    try{
+
+        const response =
+            await fetch("/api/products");
+
+        const data =
+            await response.json();
+
+        if(!data.success){
+
+            alert(data.message);
+
+            return;
+        }
+
+        productsList =
+            data.products || [];
+
+        renderProducts(productsList);
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Failed to load products."
+        );
+
+    }
+}
+
+
+function renderProducts(list){
+
+    const rows =
+        document.getElementById("productRows");
+
+    rows.innerHTML = "";
+
+    if(list.length === 0){
+
+        rows.innerHTML = `
+            <tr>
+                <td colspan="7"
+                    style="text-align:center;padding:30px">
+                    No products found.
+                </td>
+            </tr>
+        `;
+
+        return;
+    }
+
+
+    list.forEach(function(product){
+
+        const profit =
+            Number(product.selling_price) -
+            Number(product.purchase_price);
+
+
+        const tr =
+            document.createElement("tr");
+
+
+        tr.innerHTML = `
+
+            <td>${product.id}</td>
+
+            <td>
+                ${escapeHTML(product.name)}
+            </td>
+
+            <td>
+                ${product.quantity}
+            </td>
+
+            <td>
+                ${money(product.purchase_price)}
+            </td>
+
+            <td>
+                ${money(product.selling_price)}
+            </td>
+
+            <td class="${profit >= 0 ? "profit" : "loss"}">
+                ${money(profit)}
+            </td>
+
+            <td>
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="editProduct(${product.id})"
+                >
+                    EDIT
+                </button>
+
+                <button
+                    type="button"
+                    class="btn purple"
+                    onclick="editStock(${product.id}, ${product.quantity})"
+                >
+                    STOCK
+                </button>
+
+                <button
+                    type="button"
+                    class="btn red"
+                    onclick="deleteProduct(${product.id})"
+                >
+                    DELETE
+                </button>
+
+            </td>
+
+        `;
+
+        rows.appendChild(tr);
+
+    });
+
+}
+
+
+function filterProducts(){
+
+    const query =
+        document
+        .getElementById("productSearch")
+        .value
+        .toLowerCase()
+        .trim();
+
+
+    const filtered =
+        productsList.filter(function(product){
+
+            return (
+                String(product.name)
+                .toLowerCase()
+                .includes(query)
+                ||
+                String(product.id)
+                .includes(query)
+            );
+
+        });
+
+
+    renderProducts(filtered);
+}
+
+
+async function addProduct(){
+
+    const name =
+        document
+        .getElementById("productName")
+        .value
+        .trim();
+
+    const quantity =
+        Number(
+            document
+            .getElementById("productQuantity")
+            .value
+        );
+
+    const purchase =
+        Number(
+            document
+            .getElementById("purchasePrice")
+            .value
+        );
+
+    const selling =
+        Number(
+            document
+            .getElementById("sellingPrice")
+            .value
+        );
+
+
+    if(
+        !name ||
+        !Number.isInteger(quantity) ||
+        quantity < 0 ||
+        !Number.isFinite(purchase) ||
+        purchase < 0 ||
+        !Number.isFinite(selling) ||
+        selling < 0
+    ){
+
+        alert(
+            "Enter valid product information."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        name:name,
+                        quantity:quantity,
+                        purchase_price:purchase,
+                        selling_price:selling
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            document.getElementById(
+                "productName"
+            ).value = "";
+
+            document.getElementById(
+                "productQuantity"
+            ).value = "";
+
+            document.getElementById(
+                "purchasePrice"
+            ).value = "";
+
+            document.getElementById(
+                "sellingPrice"
+            ).value = "";
+
+            loadProducts();
+        }
+
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not connect to server."
+        );
+
+    }
+
+}
+
+
+async function editProduct(id){
+
+    const product =
+        productsList.find(
+            item => Number(item.id) === Number(id)
+        );
+
+
+    if(!product){
+
+        alert("Product not found.");
+
+        return;
+    }
+
+
+    const name =
+        prompt(
+            "Product name:",
+            product.name
+        );
+
+
+    if(name === null){
+
+        return;
+    }
+
+
+    const purchase =
+        prompt(
+            "Purchase price:",
+            product.purchase_price
+        );
+
+
+    if(purchase === null){
+
+        return;
+    }
+
+
+    const selling =
+        prompt(
+            "Selling price:",
+            product.selling_price
+        );
+
+
+    if(selling === null){
+
+        return;
+    }
+
+
+    const purchaseNumber =
+        Number(purchase);
+
+    const sellingNumber =
+        Number(selling);
+
+
+    if(
+        !name.trim() ||
+        !Number.isFinite(purchaseNumber) ||
+        purchaseNumber < 0 ||
+        !Number.isFinite(sellingNumber) ||
+        sellingNumber < 0
+    ){
+
+        alert(
+            "Enter valid values."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products/" + id,
+                {
+                    method:"PUT",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        name:name.trim(),
+                        purchase_price:
+                            purchaseNumber,
+                        selling_price:
+                            sellingNumber
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            loadProducts();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not update product."
+        );
+
+    }
+
+}
+
+
+async function editStock(id, currentQuantity){
+
+    const answer =
+        prompt(
+            "Current stock: " +
+            currentQuantity +
+            "\\nEnter correct total stock:",
+            currentQuantity
+        );
+
+
+    if(answer === null){
+
+        return;
+    }
+
+
+    const quantity =
+        Number(answer);
+
+
+    if(
+        !Number.isInteger(quantity) ||
+        quantity < 0
+    ){
+
+        alert(
+            "Enter a valid whole number."
+        );
+
+        return;
+    }
+
+
+    const reason =
+        prompt(
+            "Reason for correction:",
+            "Stock correction"
+        );
+
+
+    if(reason === null){
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products/" +
+                id +
+                "/stock",
+                {
+                    method:"PUT",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        quantity:quantity,
+                        reason:reason
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            loadProducts();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Stock update failed."
+        );
+
+    }
+
+}
+
+
+async function deleteProduct(id){
+
+    if(
+        !confirm(
+            "Delete this product? Stock must be zero."
+        )
+    ){
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/products/" + id,
+                {
+                    method:"DELETE"
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            loadProducts();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not delete product."
+        );
+
+    }
+
+}
+
+
+loadProducts();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# STOCK MOVEMENT PAGE
+# ============================================================
+
+MOVEMENT_HTML = """
+<!doctype html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>{{ title }}</title>
+
+<style>
+{{ css }}
+</style>
+
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+📦 Stock Management
+</div>
+
+<a class="btn" href="/dashboard">
+← Dashboard
+</a>
+
+</div>
+
+
+<div class="container">
+
+<div
+    class="box"
+    style="max-width:700px;margin:auto"
+>
+
+<h1>
+{{ icon }} {{ title }}
+</h1>
+
+
+<label>
+Product
+</label>
+
+<select
+    id="movementProduct"
+    class="input"
+>
+
+<option value="">
+Select product
+</option>
+
+</select>
+
+
+<label>
+Quantity
+</label>
+
+<input
+    id="movementQuantity"
+    class="input"
+    type="number"
+    min="1"
+    placeholder="Enter quantity"
+>
+
+
+<button
+    type="button"
+    class="btn {{ color }}"
+    style="width:100%;margin-top:20px"
+    onclick="submitMovement()"
+>
+
+{{ button }}
+
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+const movementEndpoint =
+    "{{ endpoint }}";
+
+
+async function loadMovementProducts(){
+
+    try{
+
+        const response =
+            await fetch("/api/products");
+
+        const data =
+            await response.json();
+
+
+        if(!data.success){
+
+            alert(data.message);
+
+            return;
+        }
+
+
+        const select =
+            document.getElementById(
+                "movementProduct"
+            );
+
+
+        select.innerHTML =
+            '<option value="">Select product</option>';
+
+
+        data.products.forEach(function(product){
+
+            const option =
+                document.createElement("option");
+
+            option.value =
+                product.id;
+
+            option.textContent =
+                product.name +
+                " — Stock: " +
+                product.quantity +
+                " — Buy: " +
+                Number(
+                    product.purchase_price
+                ).toLocaleString();
+
+            select.appendChild(option);
+
+        });
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Could not load products."
+        );
+
+    }
+
+}
+
+
+async function submitMovement(){
+
+    const productId =
+        Number(
+            document
+            .getElementById(
+                "movementProduct"
+            )
+            .value
+        );
+
+
+    const quantity =
+        Number(
+            document
+            .getElementById(
+                "movementQuantity"
+            )
+            .value
+        );
+
+
+    if(
+        !productId ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+    ){
+
+        alert(
+            "Enter valid information."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                movementEndpoint,
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        product_id:productId,
+                        quantity:quantity
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            document.getElementById(
+                "movementQuantity"
+            ).value = "";
+
+            await loadMovementProducts();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Transaction failed."
+        );
+
+    }
+
+}
+
+
+loadMovementProducts();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# CASH PAGE
+# ============================================================
+
+CASH_HTML = """
+<!doctype html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Cash</title>
+
+<style>
+{{ css }}
+</style>
+
+</head>
+
+<body>
+
+<div class="nav">
+
+<div class="brand">
+💰 Cash Management
+</div>
+
+<a class="btn" href="/dashboard">
+← Dashboard
+</a>
+
+</div>
+
+
+<div class="container">
+
+
+<div class="cards">
+
+<div class="card">
+
+<div class="title">
+CURRENT CASH
+</div>
+
+<div id="cashBalance" class="num">
+0
+</div>
+
+</div>
+
+</div>
+
+
+<div
+    class="box"
+    style="max-width:700px;margin-top:25px"
+>
+
+<h2>
+Cash Transaction
+</h2>
+
+
+<select
+    id="cashType"
+    class="input"
+>
+
+<option value="CASH IN">
+CASH IN
+</option>
+
+<option value="CASH OUT">
+CASH OUT
+</option>
+
+</select>
+
+
+<label>
+Amount
+</label>
+
+<input
+    id="cashAmount"
+    class="input"
+    type="number"
+    min="0.01"
+    step="0.01"
+>
+
+
+<label>
+Description
+</label>
+
+<input
+    id="cashDescription"
+    class="input"
+    placeholder="Reason / description"
+>
+
+
+<button
+    type="button"
+    class="btn green"
+    onclick="saveCash()"
+>
+
+SAVE TRANSACTION
+
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+
+function money(value){
+
+    return Number(value || 0).toLocaleString();
+
+}
+
+
+async function loadCash(){
+
+    try{
+
+        const response =
+            await fetch("/api/cash");
+
+        const data =
+            await response.json();
+
+
+        document.getElementById(
+            "cashBalance"
+        ).textContent =
+            money(data.balance);
+
+
+    }catch(error){
+
+        console.error(error);
+
+    }
+
+}
+
+
+async function saveCash(){
+
+    const type =
+        document.getElementById(
+            "cashType"
+        ).value;
+
+
+    const amount =
+        Number(
+            document.getElementById(
+                "cashAmount"
+            ).value
+        );
+
+
+    const description =
+        document.getElementById(
+            "cashDescription"
+        ).value
+        .trim();
+
+
+    if(
+        !Number.isFinite(amount) ||
+        amount <= 0
+    ){
+
+        alert(
+            "Enter a valid amount."
+        );
+
+        return;
+    }
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/cash",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:JSON.stringify({
+
+                        transaction_type:type,
+                        amount:amount,
+                        description:
+                            description
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        alert(data.message);
+
+
+        if(data.success){
+
+            document.getElementById(
+                "cashAmount"
+            ).value = "";
+
+            document.getElementById(
+                "cashDescription"
+            ).value = "";
+
+            loadCash();
+
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        alert(
+            "Cash transaction failed."
+        );
+
+    }
+
+}
+
+
+loadCash();
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ============================================================
+# HISTORY PAGE
+# ============================================================
+
+from flask import Flask, request, jsonify, session, redirect, render_template_string
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "CHANGE-THIS-STOCK-SECRET-KEY")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def get_db():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not set. Set your PostgreSQL connection string first.")
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+
+def init_database():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'user',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+                    purchase_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_price >= 0),
+                    selling_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (selling_price >= 0),
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(owner_id, name)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cash_account (
+                    id SERIAL PRIMARY KEY,
+                    balance NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    owner_id INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id SERIAL PRIMARY KEY,
+                    transaction_type VARCHAR(50) NOT NULL,
+                    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200),
+                    quantity INTEGER,
+                    purchase_price NUMERIC(14,2) DEFAULT 0,
+                    selling_price NUMERIC(14,2) DEFAULT 0,
+                    amount NUMERIC(16,2) DEFAULT 0,
+                    cost_amount NUMERIC(16,2) DEFAULT 0,
+                    profit NUMERIC(16,2) DEFAULT 0,
+                    cash_before NUMERIC(16,2) DEFAULT 0,
+                    cash_after NUMERIC(16,2) DEFAULT 0,
+                    stock_before INTEGER,
+                    stock_after INTEGER,
+                    username VARCHAR(100),
+                    description TEXT,
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id SERIAL PRIMARY KEY,
+                    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200) NOT NULL,
+                    action VARCHAR(50) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    previous_quantity INTEGER NOT NULL DEFAULT 0,
+                    new_quantity INTEGER NOT NULL DEFAULT 0,
+                    username VARCHAR(100) NOT NULL,
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         conn.commit()
+        create_default_admin(conn)
+    finally:
+        conn.close()
 
 
-    conn.close()
+def create_default_admin(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE username=%s", ("admin",))
+        row = cur.fetchone()
+        if row:
+            admin_id = row["id"]
+            cur.execute("UPDATE users SET role='admin' WHERE id=%s", (admin_id,))
+        else:
+            cur.execute("""
+                INSERT INTO users(username,password,role)
+                VALUES(%s,%s,'admin') RETURNING id
+            """, ("admin", generate_password_hash("admin123")))
+            admin_id = cur.fetchone()["id"]
+        cur.execute("""
+            INSERT INTO cash_account(balance,owner_id)
+            VALUES(0,%s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (admin_id,))
+    conn.commit()
 
 
-# =========================================================
-# SECURITY SETTINGS
-# =========================================================
+def logged_in():
+    return "user_id" in session
+
+
+def current_user_id():
+    return session.get("user_id")
+
+
+def current_username():
+    return session.get("username")
+
+
+def is_admin():
+    return session.get("role") == "admin"
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not logged_in():
+            if request.path.startswith("/api/") or request.is_json:
+                return jsonify(success=False, message="Not logged in."), 401
+            return redirect("/")
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not logged_in():
+            return jsonify(success=False, message="Not logged in."), 401
+        if not is_admin():
+            return jsonify(success=False, message="Admin permission required."), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def ensure_cash_account(conn, user_id):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO cash_account(balance,owner_id)
+            VALUES(0,%s)
+            ON CONFLICT(owner_id) DO NOTHING
+        """, (user_id,))
+        cur.execute("SELECT * FROM cash_account WHERE owner_id=%s FOR UPDATE", (user_id,))
+        return cur.fetchone()
+
+BASE_CSS = """
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f1f5f9;color:#0f172a;margin:0}.nav{background:#020617;color:#fff;padding:16px 28px;display:flex;justify-content:space-between;align-items:center;gap:12px}.brand{font-size:21px;font-weight:700}.nav a{color:#fff;text-decoration:none}.container{max-width:1500px;margin:auto;padding:28px 20px}.top{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:24px}.muted{color:#64748b}.btn{display:inline-block;border:0;border-radius:8px;padding:11px 16px;background:#2563eb;color:#fff;text-decoration:none;cursor:pointer;font-weight:700}.green{background:#16a34a}.red{background:#ef4444}.purple{background:#7c3aed}.dark{background:#0f172a}.box,.card,.section{background:#fff;padding:22px;border-radius:15px;box-shadow:0 5px 25px rgba(0,0,0,.06)}.box{margin-bottom:22px}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:18px}.card .title{color:#64748b;font-size:13px;font-weight:bold}.num{font-size:27px;font-weight:700;margin-top:10px}.form-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:12px}.input,select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px}label{font-weight:700;display:block;margin:10px 0 7px}table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;white-space:nowrap}th{background:#020617;color:#fff}.table-wrap{overflow-x:auto}.profit{color:#16a34a;font-weight:700}.loss{color:#dc2626;font-weight:700}.menu{display:grid;grid-template-columns:repeat(6,1fr);gap:16px;margin-top:25px}.menu a{background:#fff;padding:20px;border-radius:14px;text-decoration:none;color:#0f172a;font-weight:700;text-align:center;box-shadow:0 5px 20px rgba(0,0,0,.06)}.menu a:hover{background:#2563eb;color:#fff}.search{margin-bottom:18px}.auth{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(135deg,#020617,#2563eb)}.auth-box{width:100%;max-width:440px;background:#fff;padding:32px;border-radius:18px;box-shadow:0 15px 45px rgba(0,0,0,.2)}.auth-box h1{text-align:center}.auth-box .input{margin:8px 0 12px}.auth-box button{width:100%;margin-top:8px}.message{padding:10px;border-radius:8px;margin:10px 0;display:none}.small{font-size:13px}.warning{background:#fee2e2;color:#991b1b;padding:16px;border-radius:12px;margin-bottom:20px}@media(max-width:1100px){.cards{grid-template-columns:repeat(3,1fr)}.menu{grid-template-columns:repeat(3,1fr)}.form-grid{grid-template-columns:1fr 1fr}}@media(max-width:650px){.cards,.menu,.form-grid{grid-template-columns:1fr}.nav{padding:14px;flex-wrap:wrap}.container{padding:18px 12px}}
+"""
+
+AUTH_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock Management</title><style>{{ css }}</style></head><body>
+<div class="auth"><div class="auth-box"><h1>📦 Stock Management</h1><p class="muted" style="text-align:center">Login or create your account</p><div id="msg" class="message"></div>
+<input id="username" class="input" placeholder="Username" autocomplete="username"><input id="password" class="input" type="password" placeholder="Password" autocomplete="current-password"><button class="btn" onclick="login()">LOGIN</button>
+<hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0"><h3>Create account</h3><input id="rusername" class="input" placeholder="New username"><input id="rpassword" class="input" type="password" placeholder="New password"><button class="btn green" onclick="register()">REGISTER</button><p class="small muted">Password must contain at least 4 characters.</p>
+</div></div><script>
+function show(t,ok=false){const m=document.getElementById('msg');m.textContent=t;m.style.display='block';m.style.background=ok?'#dcfce7':'#fee2e2';m.style.color=ok?'#166534':'#991b1b'}
+async function login(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value.trim(),password:password.value})});const d=await r.json();if(d.success)location.href=d.redirect;else show(d.message)}
+async function register(){const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:rusername.value.trim(),password:rpassword.value})});const d=await r.json();show(d.message,d.success);if(d.success){username.value=rusername.value.trim();password.value=rpassword.value;rusername.value='';rpassword.value=''}}
+</script></body></html>
+"""
+
+DASHBOARD_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body>
+<div class="nav"><div class="brand">📦 Stock Management</div><div>👤 {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div>
+<div class="container"><div class="top"><div><h1>Welcome, {{ username }} 👋</h1><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
+<div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
+<div class="menu"><a href="/products">📦 Products</a><a href="/stock-in">➕ Stock In</a><a href="/stock-out">🛒 Stock Out</a><a href="/cash">💰 Cash</a><a href="/history">📜 History</a></div></div>
+<script>async function load(){const r=await fetch('/dashboard-data');const d=await r.json();if(!d.success)return;products.textContent=d.total_products;stock.textContent=d.total_stock;stockValue.textContent=Number(d.stock_value).toLocaleString();cash.textContent=Number(d.cash_balance).toLocaleString();potential.textContent=Number(d.potential_profit).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();low.textContent=d.low_stock}load();setInterval(load,5000)</script></body></html>
+"""
+
+PRODUCTS_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Products</title><style>{{ css }}</style></head><body>
+<div class="nav"><div class="brand">📦 Products</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box"><h2>➕ Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder="🔎 Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+<script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:name.value.trim(),quantity:Number(qty.value),purchase_price:Number(purchase.value),selling_price:Number(selling.value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){name.value='';qty.value='';purchase.value='';selling.value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script></body></html>
+"""
+
+MOVEMENT_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">📦 Stock Management</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box" style="max-width:700px;margin:auto"><h1>{{ icon }} {{ title }}</h1><label>Product</label><select id="product" class="input"></select><label>Quantity</label><input id="quantity" class="input" type="number" min="1"><div id="priceBox"></div><button class="btn {{ color }}" style="width:100%;margin-top:20px" onclick="submitMove()">{{ button }}</button></div></div><script>async function load(){const r=await fetch('/api/products');const d=await r.json();product.innerHTML='<option value="">Select product</option>'+d.products.map(p=>`<option value="${p.id}" data-price="${p.purchase_price}">${p.name} — Stock: ${p.quantity} — Buy: ${Number(p.purchase_price).toLocaleString()}</option>`).join('')}async function submitMove(){const product_id=Number(product.value),quantity=Number(document.getElementById('quantity').value);if(!product_id||!Number.isInteger(quantity)||quantity<=0)return alert('Enter valid information.');const r=await fetch('{{ endpoint }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_id,quantity})});const d=await r.json();alert(d.message);if(d.success){document.getElementById('quantity').value='';load()}}load()</script></body></html>
+"""
+
+CASH_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cash</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">💰 Cash Management</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="cards"><div class="card"><div class="title">CURRENT CASH</div><div id="balance" class="num">0</div></div></div><div class="box" style="max-width:700px;margin-top:25px"><h2>Cash Transaction</h2><select id="type" class="input"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select><label>Amount</label><input id="amount" class="input" type="number" min="0.01" step="0.01"><label>Description</label><input id="description" class="input" placeholder="Reason / description"><button class="btn green" onclick="save()">SAVE TRANSACTION</button></div></div><script>async function load(){const r=await fetch('/api/cash');const d=await r.json();balance.textContent=Number(d.balance||0).toLocaleString()}async function save(){const r=await fetch('/api/cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_type:type.value,amount:Number(amount.value),description:description.value})});const d=await r.json();alert(d.message);if(d.success){amount.value='';description.value='';load()}}load()</script></body></html>
+"""
+
+HISTORY_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>History</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">🧾 Transaction History</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><input id="search" class="input search" placeholder="🔎 Search history..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Product</th><th>Qty</th><th>Amount</th><th>Cost</th><th>Profit</th><th>Stock Before</th><th>Stock After</th><th>Cash Before</th><th>Cash After</th><th>User</th><th>Description</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div></div><script>let items=[];async function load(){const r=await fetch('/api/transactions');const d=await r.json();if(!d.success)return alert(d.message);items=d.transactions;render(items)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(t=>`<tr><td>${t.id}</td><td class="${String(t.transaction_type).includes('IN')?'profit':'loss'}">${esc(t.transaction_type)}</td><td>${esc(t.product_name||'-')}</td><td>${t.quantity??'-'}</td><td>${Number(t.amount||0).toLocaleString()}</td><td>${Number(t.cost_amount||0).toLocaleString()}</td><td class="profit">${Number(t.profit||0).toLocaleString()}</td><td>${t.stock_before??'-'}</td><td>${t.stock_after??'-'}</td><td>${Number(t.cash_before||0).toLocaleString()}</td><td>${Number(t.cash_after||0).toLocaleString()}</td><td>${esc(t.username||'-')}</td><td>${esc(t.description||'-')}</td><td>${t.created_at}</td></tr>`).join('')}function filterRows(){const q=search.value.toLowerCase();render(items.filter(t=>(String(t.transaction_type)+' '+String(t.product_name)+' '+String(t.username)+' '+String(t.description)).toLowerCase().includes(q)))}load()</script></body></html>
+"""
+
+ADMIN_HTML = """
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">👑 Admin Dashboard</div><div>ADMIN ONLY 👤 {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b>🔐 PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2>👥 Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px"><h2>👀 User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function load(){const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return alert(d.message);usersCount.textContent=d.total_users;productsCount.textContent=d.total_products;stockCount.textContent=d.total_stock;cash.textContent=Number(d.total_cash).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();stockIn.textContent=d.stock_in;stockOut.textContent=d.stock_out;userRows.innerHTML=d.users.map(u=>`<tr><td>${u.id}</td><td><b>${u.username}</b></td><td>${u.role}</td><td>${u.created_at}</td></tr>`).join('');activity.innerHTML=d.activities.map(a=>`<tr><td>${a.id}</td><td><b>${a.username}</b></td><td>${a.transaction_type}</td><td>${a.product_name||'-'}</td><td>${a.quantity??'-'}</td><td>${Number(a.amount||0).toLocaleString()}</td><td>${Number(a.profit||0).toLocaleString()}</td><td>${a.description||'-'}</td><td>${a.created_at}</td></tr>`).join('')}load();setInterval(load,5000)</script></body></html>
+"""
+
+@app.route("/")
+def home():
+    if logged_in():
+        return redirect("/admin-dashboard" if is_admin() else "/dashboard")
+    return render_template_string(AUTH_HTML, css=BASE_CSS)
+
+@app.post("/register")
+def register():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    if len(username) < 3:
+        return jsonify(success=False, message="Username must contain at least 3 characters."), 400
+    if len(password) < 4:
+        return jsonify(success=False, message="Password must contain at least 4 characters."), 400
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO users(username,password,role) VALUES(%s,%s,'user') RETURNING id", (username, generate_password_hash(password)))
+            user_id = cur.fetchone()["id"]
+            cur.execute("INSERT INTO cash_account(balance,owner_id) VALUES(0,%s)", (user_id,))
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        conn.close()
+        return jsonify(success=False, message="Username already exists."), 409
+    finally:
+        if not conn.closed:
+            conn.close()
+    return jsonify(success=True, message="Account created successfully!")
+
+@app.post("/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,username,password,role FROM users WHERE username=%s", (username,))
+            user = cur.fetchone()
+    finally:
+        conn.close()
+    if not user or not check_password_hash(user["password"], password):
+        return jsonify(success=False, message="Invalid username or password."), 401
+    session.clear()
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["role"] = user["role"]
+    return jsonify(success=True, message="Login successful!", redirect="/admin-dashboard" if user["role"] == "admin" else "/dashboard")
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+@app.get("/dashboard")
+@login_required
+def dashboard():
+    if is_admin():
+        return redirect("/admin-dashboard")
+    return render_template_string(DASHBOARD_HTML, css=BASE_CSS, username=current_username())
+
+@app.get("/dashboard-data")
+@login_required
+def dashboard_data():
+    user_id = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM products WHERE owner_id=%s", (user_id,)); total_products=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(quantity),0) AS n FROM products WHERE owner_id=%s", (user_id,)); total_stock=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(quantity*purchase_price),0) AS n FROM products WHERE owner_id=%s", (user_id,)); stock_value=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(quantity*(selling_price-purchase_price)),0) AS n FROM products WHERE owner_id=%s", (user_id,)); potential=cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM products WHERE owner_id=%s AND quantity<=5", (user_id,)); low=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(balance,0) AS n FROM cash_account WHERE owner_id=%s", (user_id,)); cash=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(amount),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); sales=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(profit),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); profit=cur.fetchone()["n"]
+    finally: conn.close()
+    return jsonify(success=True,total_products=total_products,total_stock=total_stock,stock_value=float(stock_value),potential_profit=float(potential),low_stock=low,cash_balance=float(cash),total_sales=float(sales),total_profit=float(profit))
+
+@app.get("/products")
+@login_required
+def products_page():
+    if is_admin(): return redirect("/admin-dashboard")
+    return render_template_string(PRODUCTS_HTML, css=BASE_CSS)
+
+@app.get("/api/products")
+@login_required
+def get_products():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,name,quantity,purchase_price,selling_price,created_at FROM products WHERE owner_id=%s ORDER BY id DESC", (current_user_id(),))
+            rows=cur.fetchall()
+    finally: conn.close()
+    return jsonify(success=True, products=[dict(r) for r in rows])
+
+@app.post("/api/products")
+@login_required
+def add_product():
+    data=request.get_json(silent=True) or {}
+    name=str(data.get("name","")).strip()
+    try: quantity=int(data.get("quantity",0)); purchase=float(data.get("purchase_price",0)); selling=float(data.get("selling_price",0))
+    except (ValueError,TypeError): return jsonify(success=False,message="Invalid numbers."),400
+    if not name: return jsonify(success=False,message="Product name is required."),400
+    if quantity<0 or purchase<0 or selling<0: return jsonify(success=False,message="Values cannot be negative."),400
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO products(name,quantity,purchase_price,selling_price,owner_id) VALUES(%s,%s,%s,%s,%s) RETURNING id",(name,quantity,purchase,selling,current_user_id()))
+            pid=cur.fetchone()["id"]
+            if quantity>0:
+                cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,'INITIAL STOCK',%s,0,%s,%s,%s)""",(pid,name,quantity,quantity,current_username(),current_user_id()))
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback(); return jsonify(success=False,message="You already have a product with this name."),409
+    except Exception as e:
+        conn.rollback(); print("ADD PRODUCT ERROR:",e); return jsonify(success=False,message="Product could not be added."),500
+    finally: conn.close()
+    return jsonify(success=True,message=f"{name} added successfully!")
+
+@app.put("/api/products/<int:product_id>")
+@login_required
+def edit_product(product_id):
+    data=request.get_json(silent=True) or {}; name=str(data.get("name","")).strip()
+    try: purchase=float(data.get("purchase_price")); selling=float(data.get("selling_price"))
+    except (ValueError,TypeError): return jsonify(success=False,message="Invalid price."),400
+    if not name or purchase<0 or selling<0: return jsonify(success=False,message="Enter valid product details."),400
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE products SET name=%s,purchase_price=%s,selling_price=%s WHERE id=%s AND owner_id=%s",(name,purchase,selling,product_id,current_user_id()))
+            if cur.rowcount==0: return jsonify(success=False,message="Product not found."),404
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback(); return jsonify(success=False,message="Another product already has that name."),409
+    finally: conn.close()
+    return jsonify(success=True,message="Product updated successfully!")
+
+@app.put("/api/products/<int:product_id>/stock")
+@login_required
+def edit_stock(product_id):
+    data=request.get_json(silent=True) or {}; reason=str(data.get("reason","Stock correction")).strip()
+    try: new_quantity=int(data.get("quantity"))
+    except (ValueError,TypeError): return jsonify(success=False,message="Invalid quantity."),400
+    if new_quantity<0:return jsonify(success=False,message="Quantity cannot be negative."),400
+    uid=current_user_id(); conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE id=%s AND owner_id=%s FOR UPDATE",(product_id,uid)); p=cur.fetchone()
+            if not p:return jsonify(success=False,message="Product not found."),404
+            old=int(p["quantity"]); diff=new_quantity-old
+            if diff==0:return jsonify(success=True,message="No stock change was necessary.")
+            account=ensure_cash_account(conn,uid); before=float(account["balance"]); value=abs(diff)*float(p["purchase_price"])
+            if diff>0:
+                if value>before:return jsonify(success=False,message=f"Not enough cash. Cost: {value:,.2f} Frw. Available: {before:,.2f} Frw."),400
+                after=before-value; typ="STOCK EDIT IN"; cost=value
+            else:
+                after=before+value; typ="STOCK EDIT OUT"; cost=-value
+            cur.execute("UPDATE products SET quantity=%s WHERE id=%s AND owner_id=%s",(new_quantity,product_id,uid))
+            cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
+            cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s)""",(typ,product_id,p["name"],abs(diff),p["purchase_price"],p["selling_price"],value,cost,before,after,old,new_quantity,current_username(),reason,uid))
+            cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",(product_id,p["name"],typ,abs(diff),old,new_quantity,current_username(),uid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); print("EDIT STOCK ERROR:",e); return jsonify(success=False,message="Stock correction failed. No changes were saved."),500
+    finally: conn.close()
+    return jsonify(success=True,message=f"Stock updated. Old: {old}, New: {new_quantity}, Cash: {after:,.2f} Frw")
+
+@app.delete("/api/products/<int:product_id>")
+@login_required
+def delete_product(product_id):
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT quantity FROM products WHERE id=%s AND owner_id=%s",(product_id,current_user_id())); p=cur.fetchone()
+            if not p:return jsonify(success=False,message="Product not found."),404
+            if p["quantity"]>0:return jsonify(success=False,message="You cannot delete a product while stock is still available."),400
+            cur.execute("DELETE FROM products WHERE id=%s AND owner_id=%s",(product_id,current_user_id()))
+        conn.commit()
+    finally: conn.close()
+    return jsonify(success=True,message="Product deleted successfully!")
+
+@app.get("/stock-in")
+@login_required
+def stock_in_page():
+    if is_admin():return redirect("/admin-dashboard")
+    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock In",icon="➕",button="ADD STOCK",color="green",endpoint="/api/stock-in")
+
+@app.post("/api/stock-in")
+@login_required
+def stock_in():
+    data=request.get_json(silent=True) or {}
+    try: pid=int(data.get("product_id")); qty=int(data.get("quantity"))
+    except (ValueError,TypeError):return jsonify(success=False,message="Invalid product or quantity."),400
+    if qty<=0:return jsonify(success=False,message="Quantity must be greater than zero."),400
+    uid=current_user_id(); conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE id=%s AND owner_id=%s FOR UPDATE",(pid,uid)); p=cur.fetchone()
+            if not p:return jsonify(success=False,message="Product not found."),404
+            cost=qty*float(p["purchase_price"]); account=ensure_cash_account(conn,uid); before=float(account["balance"])
+            if cost>before:return jsonify(success=False,message=f"Not enough cash. Cost: {cost:,.2f} Frw. Available: {before:,.2f} Frw. Use Cash In first."),400
+            old=int(p["quantity"]); new=old+qty; after=before-cost
+            old_value=old*float(p["purchase_price"]); avg=(old_value+cost)/new if new else 0
+            cur.execute("UPDATE products SET quantity=%s,purchase_price=%s WHERE id=%s AND owner_id=%s",(new,avg,pid,uid))
+            cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
+            cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES('STOCK IN',%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s)""",(pid,p["name"],qty,p["purchase_price"],p["selling_price"],cost,cost,before,after,old,new,current_username(),f"Purchased at {float(p['purchase_price']):,.2f} Frw/unit. Average cost now {avg:,.2f} Frw/unit.",uid))
+            cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,'STOCK IN',%s,%s,%s,%s,%s)""",(pid,p["name"],qty,old,new,current_username(),uid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback();print("STOCK IN ERROR:",e);return jsonify(success=False,message="Stock In failed. No changes were saved."),500
+    finally:conn.close()
+    return jsonify(success=True,message=f"STOCK IN SUCCESSFUL! Added {qty}. Cost {cost:,.2f} Frw. New stock {new}. Cash {after:,.2f} Frw.")
+
+@app.get("/stock-out")
+@login_required
+def stock_out_page():
+    if is_admin():return redirect("/admin-dashboard")
+    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock Out / Sale",icon="🛒",button="SELL / REMOVE STOCK",color="red",endpoint="/api/stock-out")
+
+@app.post("/api/stock-out")
+@login_required
+def stock_out():
+    data=request.get_json(silent=True) or {}
+    try:pid=int(data.get("product_id"));qty=int(data.get("quantity"))
+    except (ValueError,TypeError):return jsonify(success=False,message="Invalid product or quantity."),400
+    if qty<=0:return jsonify(success=False,message="Quantity must be greater than zero."),400
+    uid=current_user_id();conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE id=%s AND owner_id=%s FOR UPDATE",(pid,uid));p=cur.fetchone()
+            if not p:return jsonify(success=False,message="Product not found."),404
+            old=int(p["quantity"])
+            if qty>old:return jsonify(success=False,message=f"Not enough stock. Available: {old}."),400
+            pp=float(p["purchase_price"]);sp=float(p["selling_price"]);sales=qty*sp;cost=qty*pp;profit=sales-cost;new=old-qty
+            account=ensure_cash_account(conn,uid);before=float(account["balance"]);after=before+sales
+            cur.execute("UPDATE products SET quantity=%s WHERE id=%s AND owner_id=%s",(new,pid,uid));cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
+            cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES('STOCK OUT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",(pid,p["name"],qty,pp,sp,sales,cost,profit,before,after,old,new,current_username(),f"Sale. Profit: {profit:,.2f} Frw",uid))
+            cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,'STOCK OUT',%s,%s,%s,%s,%s)""",(pid,p["name"],qty,old,new,current_username(),uid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback();print("STOCK OUT ERROR:",e);return jsonify(success=False,message="Sale failed. No changes were saved."),500
+    finally:conn.close()
+    return jsonify(success=True,message=f"SALE SUCCESSFUL! Sold {qty}. Sales {sales:,.2f} Frw. Cost {cost:,.2f} Frw. Profit {profit:,.2f} Frw. Remaining stock {new}. Cash {after:,.2f} Frw.")
+
+@app.get("/cash")
+@login_required
+def cash_page():
+    if is_admin():return redirect("/admin-dashboard")
+    return render_template_string(CASH_HTML,css=BASE_CSS)
+
+@app.get("/api/cash")
+@login_required
+def get_cash():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(balance,0) AS balance FROM cash_account WHERE owner_id=%s",(current_user_id(),));row=cur.fetchone()
+    finally:conn.close()
+    return jsonify(success=True,balance=float(row["balance"]) if row else 0)
+
+@app.post("/api/cash")
+@login_required
+def cash_transaction():
+    data=request.get_json(silent=True) or {};typ=str(data.get("transaction_type","")).strip().upper();desc=str(data.get("description","Cash transaction")).strip()
+    try:amount=float(data.get("amount"))
+    except (ValueError,TypeError):return jsonify(success=False,message="Invalid amount."),400
+    if typ not in ("CASH IN","CASH OUT") or amount<=0:return jsonify(success=False,message="Enter a valid cash transaction."),400
+    uid=current_user_id();conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            account=ensure_cash_account(conn,uid);before=float(account["balance"])
+            if typ=="CASH OUT" and amount>before:return jsonify(success=False,message=f"Not enough cash. Available: {before:,.2f} Frw."),400
+            after=before+amount if typ=="CASH IN" else before-amount
+            cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
+            cur.execute("""INSERT INTO transactions(transaction_type,amount,cash_before,cash_after,username,description,owner_id) VALUES(%s,%s,%s,%s,%s,%s,%s)""",(typ,amount,before,after,current_username(),desc,uid))
+        conn.commit()
+    except Exception as e:
+        conn.rollback();print("CASH ERROR:",e);return jsonify(success=False,message="Cash transaction failed."),500
+    finally:conn.close()
+    return jsonify(success=True,message=f"{typ} successful. New balance: {after:,.2f} Frw")
+
+@app.get("/history")
+@login_required
+def history_page():
+    if is_admin():return redirect("/admin-dashboard")
+    return render_template_string(HISTORY_HTML,css=BASE_CSS)
+
+@app.get("/api/transactions")
+@login_required
+def get_transactions():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM transactions WHERE owner_id=%s ORDER BY id DESC",(current_user_id(),));rows=cur.fetchall()
+    finally:conn.close()
+    return jsonify(success=True,transactions=[dict(r) for r in rows])
+
+@app.get("/api/history")
+@login_required
+def get_history():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM history WHERE owner_id=%s ORDER BY id DESC",(current_user_id(),));rows=cur.fetchall()
+    finally:conn.close()
+    return jsonify(success=True,history=[dict(r) for r in rows])
+
+@app.get("/admin-dashboard")
+@login_required
+def admin_dashboard():
+    if not is_admin():return redirect("/dashboard")
+    return render_template_string(ADMIN_HTML,css=BASE_CSS,username=current_username())
+
+@app.get("/api/admin-dashboard")
+@admin_required
+def admin_dashboard_data():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM users WHERE role!='admin'");total_users=cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM products WHERE owner_id IN (SELECT id FROM users WHERE role!='admin')");total_products=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(quantity),0) AS n FROM products WHERE owner_id IN (SELECT id FROM users WHERE role!='admin')");total_stock=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(balance),0) AS n FROM cash_account WHERE owner_id IN (SELECT id FROM users WHERE role!='admin')");total_cash=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(amount),0) AS n FROM transactions WHERE transaction_type='STOCK OUT' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");total_sales=cur.fetchone()["n"]
+            cur.execute("SELECT COALESCE(SUM(profit),0) AS n FROM transactions WHERE transaction_type='STOCK OUT' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");total_profit=cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM transactions WHERE transaction_type='STOCK IN' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");stock_in=cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM transactions WHERE transaction_type='STOCK OUT' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");stock_out=cur.fetchone()["n"]
+            cur.execute("SELECT id,username,role,created_at FROM users WHERE role!='admin' ORDER BY id DESC");users=cur.fetchall()
+            cur.execute("SELECT id,transaction_type,product_name,quantity,amount,profit,username,description,created_at FROM transactions WHERE owner_id IN (SELECT id FROM users WHERE role!='admin') ORDER BY id DESC LIMIT 200");activities=cur.fetchall()
+    finally:conn.close()
+    return jsonify(success=True,total_users=total_users,total_products=total_products,total_stock=total_stock,total_cash=float(total_cash),total_sales=float(total_sales),total_profit=float(total_profit),stock_in=stock_in,stock_out=stock_out,users=[dict(x) for x in users],activities=[dict(x) for x in activities])
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-
-# For local HTTP development.
-# When deployed with HTTPS, change to True.
-app.config["SESSION_COOKIE_SECURE"] = False
-
-
-# =========================================================
-# START SERVER
-# =========================================================
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
 
 if __name__ == "__main__":
-
     init_database()
-
-    create_default_admin()
-
-    print()
     print("==============================================")
     print("       STOCK MANAGEMENT SYSTEM")
     print("==============================================")
-    print()
-
-    print("Server:")
-    print("http://127.0.0.1:5000")
-
-    print()
-
-    print("Normal Dashboard:")
-    print("http://127.0.0.1:5000/dashboard")
-
-    print()
-
-    print("Admin Dashboard:")
-    print("http://127.0.0.1:5000/admin-dashboard")
-
-    print()
-
-    print("Default Admin:")
-    print("Username: admin")
-    print("Password: admin123")
-
-    print()
-
-    print("==============================================")
-    print()
-
-
-    app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
-    )
+    print("Server: http://127.0.0.1:5000")
+    print("Admin: admin / admin123")
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
