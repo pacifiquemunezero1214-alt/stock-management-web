@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+stock.db
+stock_backup.db
+stock_before_multiuser_backup.db
+stock_before_render_fix.db
+*.db

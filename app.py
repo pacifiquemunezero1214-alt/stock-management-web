@@ -261,6 +261,34 @@ def login_required(function):
 
 
 # =========================================================
+# ADMIN SECURITY
+# =========================================================
+
+def admin_required(function):
+
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+
+        if not logged_in():
+
+            return jsonify(
+                success=False,
+                message="You are not logged in."
+            ), 401
+
+        if session.get("role") != "admin":
+
+            return jsonify(
+                success=False,
+                message="Access denied. Admin only."
+            ), 403
+
+        return function(*args, **kwargs)
+
+    return wrapper
+
+
+# =========================================================
 # CASH ACCOUNT FOR USER
 # =========================================================
 
@@ -399,7 +427,7 @@ def register():
 
         user_id = cursor.lastrowid
 
-        # Every new user gets his/her OWN cash account.
+        # Every new user gets OWN cash account.
         conn.execute("""
             INSERT INTO cash_account
             (
@@ -502,7 +530,7 @@ def login():
             message="Invalid username or password."
         ), 401
 
-    # Make sure this user has a private cash account.
+    # Make sure this user has private cash account.
     ensure_cash_account(
         conn,
         user["id"]
@@ -516,10 +544,20 @@ def login():
     session["username"] = user["username"]
     session["role"] = user["role"]
 
+    # Admin goes to admin dashboard.
+    # Normal user goes to normal dashboard.
+    redirect_url = (
+        "/admin-dashboard"
+        if user["role"] == "admin"
+        else "/dashboard"
+    )
+
     return jsonify(
         success=True,
         message="Login successful.",
-        username=user["username"]
+        username=user["username"],
+        role=user["role"],
+        redirect_url=redirect_url
     )
 
 
@@ -536,7 +574,7 @@ def logout():
 
 
 # =========================================================
-# DASHBOARD
+# USER DASHBOARD
 # =========================================================
 
 DASHBOARD_HTML = """
@@ -894,6 +932,11 @@ def dashboard():
 
         return redirect("/")
 
+    # Admin should use admin dashboard.
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
+
     return render_template_string(
         DASHBOARD_HTML,
         username=session["username"]
@@ -901,8 +944,8 @@ def dashboard():
 
 
 # =========================================================
-# DASHBOARD DATA
-# IMPORTANT: EVERY QUERY USES OWNER_ID
+# USER DASHBOARD DATA
+# USER SEES ONLY HIS DATA
 # =========================================================
 
 @app.route("/dashboard-data")
@@ -1353,6 +1396,10 @@ def cash_page():
     if not logged_in():
 
         return redirect("/")
+
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
 
     return render_template_string(
         CASH_HTML
@@ -2098,6 +2145,10 @@ def products_page():
 
         return redirect("/")
 
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
+
     return render_template_string(
         PRODUCTS_HTML
     )
@@ -2105,7 +2156,7 @@ def products_page():
 
 # =========================================================
 # GET PRODUCTS
-# USER CAN ONLY SEE HIS PRODUCTS
+# USER SEES ONLY HIS PRODUCTS
 # =========================================================
 
 @app.route("/api/products")
@@ -2212,7 +2263,6 @@ def add_product():
 
     conn = get_db()
 
-    # Product name is unique PER USER.
     existing = conn.execute("""
         SELECT id
         FROM products
@@ -3087,6 +3137,10 @@ def stock_in_page():
 
         return redirect("/")
 
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
+
     return render_template_string(
         STOCK_IN_HTML
     )
@@ -3632,6 +3686,10 @@ def stock_out_page():
 
         return redirect("/")
 
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
+
     return render_template_string(
         STOCK_OUT_HTML
     )
@@ -4152,6 +4210,10 @@ def history_page():
 
         return redirect("/")
 
+    if session.get("role") == "admin":
+
+        return redirect("/admin-dashboard")
+
     return render_template_string(
         HISTORY_HTML
     )
@@ -4190,6 +4252,7 @@ def get_transactions():
 
 # =========================================================
 # OLD HISTORY API
+# USER SEES ONLY HIS HISTORY
 # =========================================================
 
 @app.route("/api/history")
@@ -4216,6 +4279,1097 @@ def get_history():
             for h in history
         ]
     )
+
+
+# =========================================================
+# ADMIN DASHBOARD HTML
+# =========================================================
+
+ADMIN_DASHBOARD_HTML = """
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
+
+<title>Admin Dashboard</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f1f5f9;
+    color: #0f172a;
+}
+
+.navbar {
+    background: #020617;
+    color: white;
+    padding: 18px 30px;
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+}
+
+.brand {
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.admin-badge {
+    background: #dc2626;
+    padding: 7px 12px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.logout {
+    border: none;
+    background: #ef4444;
+    color: white;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-left: 10px;
+}
+
+.container {
+    max-width: 1500px;
+    margin: auto;
+    padding: 30px 20px;
+}
+
+.subtitle {
+    color: #64748b;
+    margin-bottom: 25px;
+}
+
+.warning {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 18px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+}
+
+.cards {
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    gap: 18px;
+}
+
+.card {
+    background: white;
+    padding: 22px;
+    border-radius: 15px;
+
+    box-shadow:
+        0 4px 20px
+        rgba(0,0,0,.06);
+}
+
+.title {
+    color: #64748b;
+    font-size: 13px;
+    font-weight: bold;
+    margin-bottom: 12px;
+}
+
+.number {
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.blue {
+    color: #2563eb;
+}
+
+.green {
+    color: #16a34a;
+}
+
+.red {
+    color: #dc2626;
+}
+
+.purple {
+    color: #7c3aed;
+}
+
+.orange {
+    color: #ea580c;
+}
+
+.section {
+    background: white;
+
+    margin-top: 25px;
+
+    padding: 25px;
+
+    border-radius: 15px;
+
+    box-shadow:
+        0 4px 20px
+        rgba(0,0,0,.06);
+}
+
+.table-box {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    padding: 13px;
+
+    border-bottom:
+        1px solid #e2e8f0;
+
+    text-align: left;
+
+    white-space: nowrap;
+}
+
+th {
+    background: #020617;
+    color: white;
+}
+
+.stock-in {
+    color: #16a34a;
+    font-weight: bold;
+}
+
+.stock-out {
+    color: #dc2626;
+    font-weight: bold;
+}
+
+.cash {
+    color: #2563eb;
+    font-weight: bold;
+}
+
+.user-name {
+    font-weight: bold;
+}
+
+@media(max-width:1000px) {
+
+    .cards {
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+
+}
+
+@media(max-width:600px) {
+
+    .cards {
+        grid-template-columns: 1fr;
+    }
+
+    .navbar {
+        padding: 15px;
+    }
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+
+<div class="navbar">
+
+<div class="brand">
+
+👑 Admin Dashboard
+
+</div>
+
+<div>
+
+<span class="admin-badge">
+ADMIN ONLY
+</span>
+
+👤 {{ username }}
+
+<button
+class="logout"
+onclick="location.href='/logout'">
+
+LOGOUT
+
+</button>
+
+</div>
+
+</div>
+
+
+<div class="container">
+
+
+<h1>
+Welcome Admin 👑
+</h1>
+
+
+<div class="subtitle">
+
+Monitor what users are doing
+in the Stock Management System.
+
+</div>
+
+
+<div class="warning">
+
+<strong>
+🔐 PRIVATE ADMIN AREA
+</strong>
+
+<br><br>
+
+Only the administrator can access
+this dashboard.
+
+Users cannot see this dashboard
+or admin activities.
+
+</div>
+
+
+<div class="cards">
+
+
+<div class="card">
+
+<div class="title">
+👥 TOTAL USERS
+</div>
+
+<div
+id="totalUsers"
+class="number blue">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+📦 TOTAL PRODUCTS
+</div>
+
+<div
+id="totalProducts"
+class="number orange">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+📊 TOTAL STOCK
+</div>
+
+<div
+id="totalStock"
+class="number purple">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+💰 USERS CASH
+</div>
+
+<div
+id="totalCash"
+class="number green">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+💵 TOTAL SALES
+</div>
+
+<div
+id="totalSales"
+class="number blue">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+📈 TOTAL PROFIT
+</div>
+
+<div
+id="totalProfit"
+class="number purple">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+📥 STOCK IN
+</div>
+
+<div
+id="stockIn"
+class="number green">
+
+0
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="title">
+📤 STOCK OUT
+</div>
+
+<div
+id="stockOut"
+class="number red">
+
+0
+
+</div>
+
+</div>
+
+
+</div>
+
+
+<div class="section">
+
+<h2>
+👥 Registered Users
+</h2>
+
+<div class="table-box">
+
+<table>
+
+<thead>
+
+<tr>
+
+<th>ID</th>
+
+<th>Username</th>
+
+<th>Role</th>
+
+<th>Created</th>
+
+</tr>
+
+</thead>
+
+<tbody id="users">
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+<div class="section">
+
+<h2>
+👀 User Activity
+</h2>
+
+<p>
+
+Here the admin sees activities
+performed by normal users.
+
+Admin activities are excluded.
+
+</p>
+
+
+<div class="table-box">
+
+<table>
+
+<thead>
+
+<tr>
+
+<th>ID</th>
+
+<th>User</th>
+
+<th>Action</th>
+
+<th>Product</th>
+
+<th>Quantity</th>
+
+<th>Amount</th>
+
+<th>Profit</th>
+
+<th>Description</th>
+
+<th>Date</th>
+
+</tr>
+
+</thead>
+
+<tbody id="activity">
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+</div>
+
+
+<script>
+
+
+async function loadAdminDashboard() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin-dashboard"
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+
+        }
+
+
+        const data =
+            await response.json();
+
+
+        if (!data.success) {
+
+            throw new Error(
+                data.message
+            );
+
+        }
+
+
+        document.getElementById(
+            "totalUsers"
+        ).textContent =
+            data.total_users;
+
+
+        document.getElementById(
+            "totalProducts"
+        ).textContent =
+            data.total_products;
+
+
+        document.getElementById(
+            "totalStock"
+        ).textContent =
+            data.total_stock;
+
+
+        document.getElementById(
+            "totalCash"
+        ).textContent =
+            Number(
+                data.total_cash
+            ).toLocaleString();
+
+
+        document.getElementById(
+            "totalSales"
+        ).textContent =
+            Number(
+                data.total_sales
+            ).toLocaleString();
+
+
+        document.getElementById(
+            "totalProfit"
+        ).textContent =
+            Number(
+                data.total_profit
+            ).toLocaleString();
+
+
+        document.getElementById(
+            "stockIn"
+        ).textContent =
+            data.stock_in;
+
+
+        document.getElementById(
+            "stockOut"
+        ).textContent =
+            data.stock_out;
+
+
+        loadUsers(
+            data.users
+        );
+
+
+        loadActivity(
+            data.activities
+        );
+
+    }
+
+    catch(error) {
+
+        console.error(
+            "Admin dashboard error:",
+            error
+        );
+
+        alert(
+            "Could not load admin dashboard."
+        );
+
+    }
+
+}
+
+
+function loadUsers(users) {
+
+    const table =
+        document.getElementById(
+            "users"
+        );
+
+    table.innerHTML = "";
+
+
+    users.forEach(
+        user => {
+
+            table.innerHTML += `
+
+            <tr>
+
+                <td>
+                    ${user.id}
+                </td>
+
+                <td class="user-name">
+                    ${user.username}
+                </td>
+
+                <td>
+                    ${user.role}
+                </td>
+
+                <td>
+                    ${user.created_at}
+                </td>
+
+            </tr>
+
+            `;
+
+        }
+    );
+
+}
+
+
+function loadActivity(activities) {
+
+    const table =
+        document.getElementById(
+            "activity"
+        );
+
+    table.innerHTML = "";
+
+
+    activities.forEach(
+        item => {
+
+            let actionClass = "";
+
+
+            if(
+                item.transaction_type ===
+                "STOCK IN"
+            ) {
+
+                actionClass =
+                    "stock-in";
+
+            }
+
+            else if(
+                item.transaction_type ===
+                "STOCK OUT"
+            ) {
+
+                actionClass =
+                    "stock-out";
+
+            }
+
+            else if(
+                item.transaction_type.includes(
+                    "CASH"
+                )
+            ) {
+
+                actionClass =
+                    "cash";
+
+            }
+
+
+            table.innerHTML += `
+
+            <tr>
+
+                <td>
+                    ${item.id}
+                </td>
+
+                <td class="user-name">
+                    ${item.username}
+                </td>
+
+                <td class="${actionClass}">
+                    ${item.transaction_type}
+                </td>
+
+                <td>
+                    ${item.product_name || "-"}
+                </td>
+
+                <td>
+                    ${item.quantity || "-"}
+                </td>
+
+                <td>
+                    ${Number(
+                        item.amount || 0
+                    ).toLocaleString()}
+                </td>
+
+                <td>
+                    ${Number(
+                        item.profit || 0
+                    ).toLocaleString()}
+                </td>
+
+                <td>
+                    ${item.description || "-"}
+                </td>
+
+                <td>
+                    ${item.created_at}
+                </td>
+
+            </tr>
+
+            `;
+
+        }
+    );
+
+}
+
+
+loadAdminDashboard();
+
+
+setInterval(
+    loadAdminDashboard,
+    5000
+);
+
+
+</script>
+
+</body>
+
+</html>
+"""
+
+
+# =========================================================
+# ADMIN DASHBOARD PAGE
+# ADMIN ONLY
+# =========================================================
+
+@app.route("/admin-dashboard")
+def admin_dashboard():
+
+    if not logged_in():
+
+        return redirect("/")
+
+    if session.get("role") != "admin":
+
+        return redirect("/dashboard")
+
+    return render_template_string(
+        ADMIN_DASHBOARD_HTML,
+        username=session.get("username")
+    )
+
+
+# =========================================================
+# ADMIN DASHBOARD API
+#
+# ADMIN SEES ONLY NON-ADMIN USERS
+# ADMIN ACTIVITIES ARE NOT INCLUDED
+# =========================================================
+
+@app.route("/api/admin-dashboard")
+@admin_required
+def admin_dashboard_data():
+
+    conn = get_db()
+
+    try:
+
+        # -------------------------------------------------
+        # TOTAL NORMAL USERS
+        # -------------------------------------------------
+
+        total_users = conn.execute("""
+            SELECT COUNT(*)
+            FROM users
+            WHERE role != 'admin'
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # TOTAL PRODUCTS OF NORMAL USERS
+        # -------------------------------------------------
+
+        total_products = conn.execute("""
+            SELECT COUNT(*)
+            FROM products
+            WHERE owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # TOTAL STOCK OF NORMAL USERS
+        # -------------------------------------------------
+
+        total_stock = conn.execute("""
+            SELECT COALESCE(
+                SUM(quantity),
+                0
+            )
+            FROM products
+            WHERE owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # TOTAL CASH OF NORMAL USERS
+        # -------------------------------------------------
+
+        total_cash = conn.execute("""
+            SELECT COALESCE(
+                SUM(balance),
+                0
+            )
+            FROM cash_account
+            WHERE owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # TOTAL SALES OF NORMAL USERS
+        # -------------------------------------------------
+
+        total_sales = conn.execute("""
+            SELECT COALESCE(
+                SUM(amount),
+                0
+            )
+            FROM transactions
+            WHERE transaction_type = 'STOCK OUT'
+            AND owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # TOTAL PROFIT OF NORMAL USERS
+        # -------------------------------------------------
+
+        total_profit = conn.execute("""
+            SELECT COALESCE(
+                SUM(profit),
+                0
+            )
+            FROM transactions
+            WHERE transaction_type = 'STOCK OUT'
+            AND owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # STOCK IN COUNT
+        # -------------------------------------------------
+
+        stock_in = conn.execute("""
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE transaction_type = 'STOCK IN'
+            AND owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # STOCK OUT COUNT
+        # -------------------------------------------------
+
+        stock_out = conn.execute("""
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE transaction_type = 'STOCK OUT'
+            AND owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+        """).fetchone()[0]
+
+
+        # -------------------------------------------------
+        # NORMAL USERS
+        # ADMIN IS NOT SHOWN HERE
+        # -------------------------------------------------
+
+        users = conn.execute("""
+            SELECT
+                id,
+                username,
+                role,
+                created_at
+            FROM users
+            WHERE role != 'admin'
+            ORDER BY id DESC
+        """).fetchall()
+
+
+        # -------------------------------------------------
+        # USER ACTIVITIES
+        #
+        # IMPORTANT:
+        #
+        # Only transactions belonging to normal users
+        # are returned.
+        #
+        # Therefore ADMIN ACTIVITIES CANNOT APPEAR.
+        # -------------------------------------------------
+
+        activities = conn.execute("""
+            SELECT
+                id,
+                transaction_type,
+                product_id,
+                product_name,
+                quantity,
+                purchase_price,
+                selling_price,
+                amount,
+                cost_amount,
+                profit,
+                cash_before,
+                cash_after,
+                stock_before,
+                stock_after,
+                username,
+                description,
+                created_at
+            FROM transactions
+            WHERE owner_id IN (
+                SELECT id
+                FROM users
+                WHERE role != 'admin'
+            )
+            ORDER BY id DESC
+            LIMIT 200
+        """).fetchall()
+
+
+        conn.close()
+
+
+        return jsonify(
+
+            success=True,
+
+            total_users=total_users,
+
+            total_products=total_products,
+
+            total_stock=total_stock,
+
+            total_cash=round(
+                float(total_cash),
+                2
+            ),
+
+            total_sales=round(
+                float(total_sales),
+                2
+            ),
+
+            total_profit=round(
+                float(total_profit),
+                2
+            ),
+
+            stock_in=stock_in,
+
+            stock_out=stock_out,
+
+            users=[
+                dict(user)
+                for user in users
+            ],
+
+            activities=[
+                dict(activity)
+                for activity in activities
+            ]
+
+        )
+
+
+    except Exception as error:
+
+        conn.close()
+
+        print(
+            "ADMIN DASHBOARD ERROR:",
+            error
+        )
+
+        return jsonify(
+            success=False,
+            message="Could not load admin dashboard."
+        ), 500
 
 
 # =========================================================
@@ -4276,18 +5430,26 @@ def create_default_admin():
 
     else:
 
-        # Make sure old admin has a cash account.
+        # Make sure admin role remains admin.
+        conn.execute("""
+            UPDATE users
+            SET role = 'admin'
+            WHERE username = 'admin'
+        """)
+
         ensure_cash_account(
             conn,
             user["id"]
         )
 
+        conn.commit()
+
+
     # -----------------------------------------------------
-    # IMPORTANT MIGRATION:
+    # MIGRATION:
     #
-    # Old records from the previous version had no owner_id.
-    # We attach those old records to the admin account.
-    # New users will NOT see them.
+    # Old records without owner_id
+    # belong to admin.
     # -----------------------------------------------------
 
     admin = conn.execute("""
@@ -4298,9 +5460,11 @@ def create_default_admin():
         "admin",
     )).fetchone()
 
+
     if admin:
 
         admin_id = admin["id"]
+
 
         conn.execute("""
             UPDATE products
@@ -4310,6 +5474,7 @@ def create_default_admin():
             admin_id,
         ))
 
+
         conn.execute("""
             UPDATE transactions
             SET owner_id = ?
@@ -4317,6 +5482,7 @@ def create_default_admin():
         """, (
             admin_id,
         ))
+
 
         conn.execute("""
             UPDATE history
@@ -4326,7 +5492,8 @@ def create_default_admin():
             admin_id,
         ))
 
-        # Old cash account id=1 belongs to admin
+
+        # Old cash account without owner
         old_cash = conn.execute("""
             SELECT *
             FROM cash_account
@@ -4334,6 +5501,7 @@ def create_default_admin():
             ORDER BY id
             LIMIT 1
         """).fetchone()
+
 
         if old_cash:
 
@@ -4346,7 +5514,9 @@ def create_default_admin():
                 old_cash["id"]
             ))
 
+
         conn.commit()
+
 
     conn.close()
 
@@ -4356,9 +5526,11 @@ def create_default_admin():
 # =========================================================
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
+
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
-# When deployed with HTTPS, change this to True.
+# For local HTTP development.
+# When deployed with HTTPS, change to True.
 app.config["SESSION_COOKIE_SECURE"] = False
 
 
@@ -4377,18 +5549,31 @@ if __name__ == "__main__":
     print("       STOCK MANAGEMENT SYSTEM")
     print("==============================================")
     print()
+
     print("Server:")
     print("http://127.0.0.1:5000")
+
     print()
-    print("Dashboard:")
+
+    print("Normal Dashboard:")
     print("http://127.0.0.1:5000/dashboard")
+
     print()
+
+    print("Admin Dashboard:")
+    print("http://127.0.0.1:5000/admin-dashboard")
+
+    print()
+
     print("Default Admin:")
     print("Username: admin")
     print("Password: admin123")
+
     print()
+
     print("==============================================")
     print()
+
 
     app.run(
         host="0.0.0.0",
