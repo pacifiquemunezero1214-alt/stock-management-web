@@ -4622,7 +4622,7 @@ AUTH_HTML = """
 <hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0"><h3>Create account</h3><input id="rusername" class="input" placeholder="New username"><input id="rpassword" class="input" type="password" placeholder="New password"><button class="btn green" onclick="register()">REGISTER</button><p class="small muted">Password must contain at least 4 characters.</p>
 </div></div><script>
 function show(t,ok=false){const m=document.getElementById('msg');m.textContent=t;m.style.display='block';m.style.background=ok?'#dcfce7':'#fee2e2';m.style.color=ok?'#166534':'#991b1b'}
-async function login(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value.trim(),password:password.value})});const d=await r.json();if(d.success)location.href=d.redirect;else show(d.message)}
+async function login(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value.trim(),password:password.value})});const d=await r.json();if(d.success){alert("Murakaza neza, "+username.value.trim()+"!");location.href=d.redirect}else show(d.message)}
 async function register(){const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:rusername.value.trim(),password:rpassword.value})});const d=await r.json();show(d.message,d.success);if(d.success){username.value=rusername.value.trim();password.value=rpassword.value;rusername.value='';rpassword.value=''}}
 </script></body></html>
 """
@@ -4708,6 +4708,39 @@ def login():
     session["username"] = user["username"]
     session["role"] = user["role"]
     return jsonify(success=True, message="Login successful!", redirect="/admin-dashboard" if user["role"] == "admin" else "/dashboard")
+
+@app.post("/change-password")
+@login_required
+def change_password():
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get("current_password", ""))
+    new_password = str(data.get("new_password", ""))
+    confirm_password = str(data.get("confirm_password", ""))
+    if not current_password or not new_password or not confirm_password:
+        return jsonify(success=False, message="All password fields are required."), 400
+    if len(new_password) < 4:
+        return jsonify(success=False, message="New password must contain at least 4 characters."), 400
+    if new_password != confirm_password:
+        return jsonify(success=False, message="New passwords do not match."), 400
+    if current_password == new_password:
+        return jsonify(success=False, message="New password must be different from current password."), 400
+    uid = session.get("user_id")
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password FROM users WHERE id=%s", (uid,))
+            user = cur.fetchone()
+            if not user or not check_password_hash(user["password"], current_password):
+                return jsonify(success=False, message="Current password is incorrect."), 401
+            cur.execute("UPDATE users SET password=%s WHERE id=%s", (generate_password_hash(new_password), uid))
+        conn.commit()
+        return jsonify(success=True, message="Password changed successfully.")
+    except Exception as e:
+        conn.rollback()
+        print("CHANGE PASSWORD ERROR:", e)
+        return jsonify(success=False, message="Password change failed. No changes were saved."), 500
+    finally:
+        conn.close()
 
 @app.get("/logout")
 def logout():
