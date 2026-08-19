@@ -68,7 +68,8 @@ def init_database():
 
             # CASH
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS cash_account (
+                            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0")
+CREATE TABLE IF NOT EXISTS cash_account (
                     id SERIAL PRIMARY KEY,
                     balance NUMERIC(16,2) NOT NULL DEFAULT 0,
                     owner_id INTEGER UNIQUE NOT NULL
@@ -1057,6 +1058,15 @@ PRODUCTS_HTML = """
 >
 
 <input
+    id="unitCost"
+    class="input"
+    type="number"
+    min="0"
+    step="0.01"
+    placeholder="Unit cost"
+>
+
+<input
     id="sellingPrice"
     class="input"
     type="number"
@@ -1103,6 +1113,7 @@ Use Stock In when purchasing stock.
 <th>Product</th>
 <th>Stock</th>
 <th>Purchase</th>
+<th>Unit Cost</th>
 <th>Selling</th>
 <th>Profit/Unit</th>
 <th>Action</th>
@@ -1339,7 +1350,7 @@ async function addProduct(){
             document
             .getElementById("sellingPrice")
             .value
-        );
+        );\n\n    const unitCost =\n        Number(\n            document\n            .getElementById("unitCost")\n            .value\n        );
 
 
     if(
@@ -1349,7 +1360,9 @@ async function addProduct(){
         !Number.isFinite(purchase) ||
         purchase < 0 ||
         !Number.isFinite(selling) ||
-        selling < 0
+        selling < 0,
+        !Number.isFinite(unitCost) ||
+        unitCost < 0
     ){
 
         alert(
@@ -1378,6 +1391,7 @@ async function addProduct(){
                         name:name,
                         quantity:quantity,
                         purchase_price:purchase,
+                        unit_cost:unitCost,
                         selling_price:selling
 
                     })
@@ -1409,6 +1423,8 @@ async function addProduct(){
             document.getElementById(
                 "sellingPrice"
             ).value = "";
+
+            document.getElementById("unitCost").value = "";
 
             loadProducts();
         }
@@ -4501,6 +4517,7 @@ def init_database():
                     name VARCHAR(200) NOT NULL,
                     quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
                     purchase_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_price >= 0),
+                    unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
                     selling_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (selling_price >= 0),
                     owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4652,8 +4669,8 @@ DASHBOARD_HTML = """
 
 PRODUCTS_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Products</title><style>{{ css }}</style></head><body>
-<div class="nav"><div class="brand">📦 Products</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box"><h2>➕ Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder="🔎 Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
-<script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:document.getElementById("name").value.trim(),quantity:Number(document.getElementById("qty").value),purchase_price:Number(document.getElementById("purchase").value),selling_price:Number(document.getElementById("selling").value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){document.getElementById('name').value='';document.getElementById('qty').value='';document.getElementById('purchase').value='';document.getElementById('selling').value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script></body></html>
+<div class="nav"><div class="brand">📦 Products</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box"><h2>➕ Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="unitCost" class="input" type="number" min="0" step="0.01" placeholder="Unit cost"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder="🔎 Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Unit Cost</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+<script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.unit_cost).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:document.getElementById("name").value.trim(),quantity:Number(document.getElementById("qty").value),purchase_price:Number(document.getElementById("purchase").value),unit_cost:Number(document.getElementById("unitCost").value),selling_price:Number(document.getElementById("selling").value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.unit_cost)||body.unit_cost<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){document.getElementById('name').value='';document.getElementById('qty').value='';document.getElementById('purchase').value='';document.getElementById('unitCost').value='';document.getElementById('selling').value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script></body></html>
 """
 
 MOVEMENT_HTML = """
@@ -4805,7 +4822,7 @@ def get_products():
     conn=get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,name,quantity,purchase_price,selling_price,created_at FROM products WHERE owner_id=%s ORDER BY id DESC", (current_user_id(),))
+            cur.execute("SELECT id,name,quantity,purchase_price,unit_cost,selling_price,created_at FROM products WHERE owner_id=%s ORDER BY id DESC", (current_user_id(),))
             rows=cur.fetchall()
     finally: conn.close()
     return jsonify(success=True, products=[dict(r) for r in rows])
@@ -4815,14 +4832,14 @@ def get_products():
 def add_product():
     data=request.get_json(silent=True) or {}
     name=str(data.get("name","")).strip()
-    try: quantity=int(data.get("quantity",0)); purchase=float(data.get("purchase_price",0)); selling=float(data.get("selling_price",0))
+    try: quantity=int(data.get("quantity",0)); purchase=float(data.get("purchase_price",0)); unit_cost=float(data.get("unit_cost",purchase)); selling=float(data.get("selling_price",0))
     except (ValueError,TypeError): return jsonify(success=False,message="Invalid numbers."),400
     if not name: return jsonify(success=False,message="Product name is required."),400
-    if quantity<0 or purchase<0 or selling<0: return jsonify(success=False,message="Values cannot be negative."),400
+    if quantity<0 or purchase<0 or unit_cost<0 or selling<0: return jsonify(success=False,message="Values cannot be negative."),400
     conn=get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO products(name,quantity,purchase_price,selling_price,owner_id) VALUES(%s,%s,%s,%s,%s) RETURNING id",(name,quantity,purchase,selling,current_user_id()))
+            cur.execute("INSERT INTO products(name,quantity,purchase_price,unit_cost,selling_price,owner_id) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",(name,quantity,purchase,unit_cost,selling,current_user_id()))
             pid=cur.fetchone()["id"]
             if quantity>0:
                 cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,'INITIAL STOCK',%s,0,%s,%s,%s)""",(pid,name,quantity,quantity,current_username(),current_user_id()))
@@ -4838,13 +4855,13 @@ def add_product():
 @login_required
 def edit_product(product_id):
     data=request.get_json(silent=True) or {}; name=str(data.get("name","")).strip()
-    try: purchase=float(data.get("purchase_price")); selling=float(data.get("selling_price"))
+    try: purchase=float(data.get("purchase_price")); unit_cost=float(data.get("unit_cost",purchase)); selling=float(data.get("selling_price"))
     except (ValueError,TypeError): return jsonify(success=False,message="Invalid price."),400
-    if not name or purchase<0 or selling<0: return jsonify(success=False,message="Enter valid product details."),400
+    if not name or purchase<0 or unit_cost<0 or selling<0: return jsonify(success=False,message="Enter valid product details."),400
     conn=get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE products SET name=%s,purchase_price=%s,selling_price=%s WHERE id=%s AND owner_id=%s",(name,purchase,selling,product_id,current_user_id()))
+            cur.execute("UPDATE products SET name=%s,purchase_price=%s,unit_cost=%s,selling_price=%s WHERE id=%s AND owner_id=%s",(name,purchase,unit_cost,selling,product_id,current_user_id()))
             if cur.rowcount==0: return jsonify(success=False,message="Product not found."),404
         conn.commit()
     except psycopg2.errors.UniqueViolation:
@@ -4914,13 +4931,13 @@ def stock_in():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM products WHERE id=%s AND owner_id=%s FOR UPDATE",(pid,uid)); p=cur.fetchone()
             if not p:return jsonify(success=False,message="Product not found."),404
-            cost=qty*float(p["purchase_price"]); account=ensure_cash_account(conn,uid); before=float(account["balance"])
+            cost=qty*float(p["unit_cost"]); account=ensure_cash_account(conn,uid); before=float(account["balance"])
             if cost>before:return jsonify(success=False,message=f"Not enough cash. Cost: {cost:,.2f} Frw. Available: {before:,.2f} Frw. Use Cash In first."),400
             old=int(p["quantity"]); new=old+qty; after=before-cost
-            old_value=old*float(p["purchase_price"]); avg=(old_value+cost)/new if new else 0
-            cur.execute("UPDATE products SET quantity=%s,purchase_price=%s WHERE id=%s AND owner_id=%s",(new,avg,pid,uid))
+            avg=float(p["unit_cost"])
+            cur.execute("UPDATE products SET quantity=%s WHERE id=%s AND owner_id=%s",(new,pid,uid))
             cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
-            cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES('STOCK IN',%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s)""",(pid,p["name"],qty,p["purchase_price"],p["selling_price"],cost,cost,before,after,old,new,current_username(),f"Purchased at {float(p['purchase_price']):,.2f} Frw/unit. Average cost now {avg:,.2f} Frw/unit.",uid))
+            cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES('STOCK IN',%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s)""",(pid,p["name"],qty,p["purchase_price"],p["selling_price"],cost,cost,before,after,old,new,current_username(),f"Purchased at {float(p['purchase_price']):,.2f} Frw/unit. ",uid))
             cur.execute("""INSERT INTO history(product_id,product_name,action,quantity,previous_quantity,new_quantity,username,owner_id) VALUES(%s,%s,'STOCK IN',%s,%s,%s,%s,%s)""",(pid,p["name"],qty,old,new,current_username(),uid))
         conn.commit()
     except Exception as e:
@@ -4948,7 +4965,7 @@ def stock_out():
             if not p:return jsonify(success=False,message="Product not found."),404
             old=int(p["quantity"])
             if qty>old:return jsonify(success=False,message=f"Not enough stock. Available: {old}."),400
-            pp=float(p["purchase_price"]);sp=float(p["selling_price"]);sales=qty*sp;cost=qty*pp;profit=sales-cost;new=old-qty
+            pp=float(p["unit_cost"]);sp=float(p["selling_price"]);sales=qty*sp;cost=qty*pp;profit=sales-cost;new=old-qty
             account=ensure_cash_account(conn,uid);before=float(account["balance"]);after=before+sales
             cur.execute("UPDATE products SET quantity=%s WHERE id=%s AND owner_id=%s",(new,pid,uid));cur.execute("UPDATE cash_account SET balance=%s WHERE owner_id=%s",(after,uid))
             cur.execute("""INSERT INTO transactions(transaction_type,product_id,product_name,quantity,purchase_price,selling_price,amount,cost_amount,profit,cash_before,cash_after,stock_before,stock_after,username,description,owner_id) VALUES('STOCK OUT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",(pid,p["name"],qty,pp,sp,sales,cost,profit,before,after,old,new,current_username(),f"Sale. Profit: {profit:,.2f} Frw",uid))
