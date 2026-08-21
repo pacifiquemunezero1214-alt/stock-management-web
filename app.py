@@ -960,7 +960,7 @@ async function loadDashboard(){
             .textContent = money(data.total_profit);
 
         document.getElementById("lowStock")
-            .textContent = data.low_stock;
+            .textContent = data.low_stock;\n\n        if(data.low_stock > 0){showLowStockNotification(data.low_stock);}
 
     }catch(error){
 
@@ -973,7 +973,7 @@ async function loadDashboard(){
 }
 
 
-loadDashboard();
+function showLowStockNotification(count){let old=document.getElementById("lowStockNotification");if(old)old.remove();const box=document.createElement("div");box.id="lowStockNotification";box.style.cssText="position:fixed;top:20px;right:20px;background:#dc2626;color:white;padding:16px 20px;border-radius:10px;box-shadow:0 8px 25px rgba(0,0,0,.25);z-index:9999;font-weight:bold;cursor:pointer";box.innerHTML="⚠️ LOW STOCK ALERT - "+count+" product(s) have stock of 5 or less.";box.onclick=()=>box.remove();document.body.appendChild(box);setTimeout(()=>box.remove(),8000);};loadDashboard();
 
 setInterval(
     loadDashboard,
