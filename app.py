@@ -960,7 +960,9 @@ async function loadDashboard(){
             .textContent = money(data.total_profit);
 
         document.getElementById("lowStock")
-            .textContent = data.low_stock;\n\n        if(data.low_stock > 0){showLowStockNotification(data.low_stock);}
+            .textContent = data.low_stock;
+
+        if(data.low_stock > 0){showLowStockNotification(data.low_stock);}
 
     }catch(error){
 
