@@ -105,6 +105,46 @@ CREATE TABLE IF NOT EXISTS cash_account (
                 )
             """)
 
+            # DEBIT & CREDIT
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    phone VARCHAR(50),
+                    address VARCHAR(300),
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS debts (
+                    id SERIAL PRIMARY KEY,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+                    product_name VARCHAR(200),
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    total_amount NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    amount_paid NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    amount_remaining NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    due_date DATE,
+                    status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
+                    description TEXT,
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS debt_payments (
+                    id SERIAL PRIMARY KEY,
+                    debt_id INTEGER NOT NULL REFERENCES debts(id) ON DELETE CASCADE,
+                    amount NUMERIC(16,2) NOT NULL,
+                    payment_method VARCHAR(50) DEFAULT 'CASH',
+                    description TEXT,
+                    username VARCHAR(100),
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             # HISTORY
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS approval_requests (
@@ -4668,7 +4708,25 @@ DASHBOARD_HTML = """
 <div class="container"><div class="top"><div><h1>Welcome, {{ username }} </h1><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
 <div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
 <div class="menu"><a href="/products"> Products</a><a href="/stock-in"> Stock In</a><a href="/stock-out"> Stock Out</a><a href="/cash"> Cash</a><a href="/history"> History</a></div></div>
-<script>async function load(){const r=await fetch('/dashboard-data');const d=await r.json();if(!d.success)return;products.textContent=d.total_products;stock.textContent=d.total_stock;stockValue.textContent=Number(d.stock_value).toLocaleString();cash.textContent=Number(d.cash_balance).toLocaleString();potential.textContent=Number(d.potential_profit).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();low.textContent=d.low_stock}</script></body></html>
+<script>
+async function loadDashboard(){
+ try{
+  const response=await fetch('/dashboard-data',{cache:'no-store'});
+  const d=await response.json();
+  if(!d.success){console.error('Dashboard error:',d);return;}
+  document.getElementById('products').textContent=Number(d.total_products||0).toLocaleString();
+  document.getElementById('stock').textContent=Number(d.total_stock||0).toLocaleString();
+  document.getElementById('stockValue').textContent=Number(d.stock_value||0).toLocaleString();
+  document.getElementById('cash').textContent=Number(d.cash_balance||0).toLocaleString();
+  document.getElementById('potential').textContent=Number(d.potential_profit||0).toLocaleString();
+  document.getElementById('sales').textContent=Number(d.total_sales||0).toLocaleString();
+  document.getElementById('profit').textContent=Number(d.total_profit||0).toLocaleString();
+  document.getElementById('low').textContent=Number(d.low_stock||0).toLocaleString();
+ }catch(e){console.error('Dashboard loading error:',e);}
+}
+loadDashboard();
+setInterval(loadDashboard,5000);
+</script></body></html>
 """
 
 PRODUCTS_HTML = """

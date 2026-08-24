@@ -940,28 +940,28 @@ async function loadDashboard(){
             return;
         }
 
-        document.getElementById("products")
+        document.getElementById("productsCount")
             .textContent = data.total_products;
 
-        document.getElementById("stock")
+        document.getElementById("stockCount")
             .textContent = data.total_stock;
 
         document.getElementById("stockValue")
             .textContent = money(data.stock_value);
 
-        document.getElementById("cash")
+        document.getElementById("cashBalance")
             .textContent = money(data.cash_balance);
 
-        document.getElementById("potential")
+        document.getElementById("potentialProfit")
             .textContent = money(data.potential_profit);
 
-        document.getElementById("sales")
+        document.getElementById("totalSales")
             .textContent = money(data.total_sales);
 
-        document.getElementById("profit")
+        document.getElementById("totalProfit")
             .textContent = money(data.total_profit);
 
-        document.getElementById("low")
+        document.getElementById("lowStock")
             .textContent = data.low_stock;
 
         if(data.low_stock > 0){showLowStockNotification(data.low_stock);}
@@ -3182,28 +3182,28 @@ async function loadDashboard(){
             return;
         }
 
-        document.getElementById("products")
+        document.getElementById("productsCount")
             .textContent = data.total_products;
 
-        document.getElementById("stock")
+        document.getElementById("stockCount")
             .textContent = data.total_stock;
 
         document.getElementById("stockValue")
             .textContent = money(data.stock_value);
 
-        document.getElementById("cash")
+        document.getElementById("cashBalance")
             .textContent = money(data.cash_balance);
 
-        document.getElementById("potential")
+        document.getElementById("potentialProfit")
             .textContent = money(data.potential_profit);
 
-        document.getElementById("sales")
+        document.getElementById("totalSales")
             .textContent = money(data.total_sales);
 
-        document.getElementById("profit")
+        document.getElementById("totalProfit")
             .textContent = money(data.total_profit);
 
-        document.getElementById("low")
+        document.getElementById("lowStock")
             .textContent = data.low_stock;
 
     }catch(error){
@@ -5125,7 +5125,6 @@ if __name__ == "__main__":
     print("Server: http://127.0.0.1:5000")
     print("Admin: admin / admin123")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
-
 
 
 

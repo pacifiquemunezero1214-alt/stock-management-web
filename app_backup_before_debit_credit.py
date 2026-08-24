@@ -4668,7 +4668,25 @@ DASHBOARD_HTML = """
 <div class="container"><div class="top"><div><h1>Welcome, {{ username }} </h1><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
 <div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
 <div class="menu"><a href="/products"> Products</a><a href="/stock-in"> Stock In</a><a href="/stock-out"> Stock Out</a><a href="/cash"> Cash</a><a href="/history"> History</a></div></div>
-<script>async function load(){const r=await fetch('/dashboard-data');const d=await r.json();if(!d.success)return;products.textContent=d.total_products;stock.textContent=d.total_stock;stockValue.textContent=Number(d.stock_value).toLocaleString();cash.textContent=Number(d.cash_balance).toLocaleString();potential.textContent=Number(d.potential_profit).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();low.textContent=d.low_stock}</script></body></html>
+<script>
+async function loadDashboard(){
+ try{
+  const response=await fetch('/dashboard-data',{cache:'no-store'});
+  const d=await response.json();
+  if(!d.success){console.error('Dashboard error:',d);return;}
+  document.getElementById('products').textContent=Number(d.total_products||0).toLocaleString();
+  document.getElementById('stock').textContent=Number(d.total_stock||0).toLocaleString();
+  document.getElementById('stockValue').textContent=Number(d.stock_value||0).toLocaleString();
+  document.getElementById('cash').textContent=Number(d.cash_balance||0).toLocaleString();
+  document.getElementById('potential').textContent=Number(d.potential_profit||0).toLocaleString();
+  document.getElementById('sales').textContent=Number(d.total_sales||0).toLocaleString();
+  document.getElementById('profit').textContent=Number(d.total_profit||0).toLocaleString();
+  document.getElementById('low').textContent=Number(d.low_stock||0).toLocaleString();
+ }catch(e){console.error('Dashboard loading error:',e);}
+}
+loadDashboard();
+setInterval(loadDashboard,5000);
+</script></body></html>
 """
 
 PRODUCTS_HTML = """

@@ -49,8 +49,6 @@ def init_database():
             """)
 
             # PRODUCTS
-            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS products (
                     id SERIAL PRIMARY KEY,
@@ -570,7 +568,7 @@ AUTH_HTML = """
 
 <div class="auth-box">
 
-<h1> Stock Management</h1>
+<h1>📦 Stock Management</h1>
 
 <p class="muted" style="text-align:center">
 Login or create your account
@@ -809,11 +807,11 @@ DASHBOARD_HTML = """
 <div class="nav">
 
 <div class="brand">
- Stock Management
+📦 Stock Management
 </div>
 
 <div>
- {{ username }}
+👤 {{ username }}
 
 <a class="btn red" href="/logout">
 LOGOUT
@@ -831,7 +829,7 @@ LOGOUT
 <div>
 
 <h1>
-Welcome, {{ username }} 
+Welcome, {{ username }} 👋
 </h1>
 
 <p class="muted">
@@ -891,23 +889,23 @@ Manage stock, cash, sales and profit.
 <div class="menu">
 
 <a href="/products">
- Products
+📦 Products
 </a>
 
 <a href="/stock-in">
- Stock In
+➕ Stock In
 </a>
 
 <a href="/stock-out">
- Stock Out
+🛒 Stock Out
 </a>
 
 <a href="/cash">
- Cash
+💰 Cash
 </a>
 
 <a href="/history">
- History
+📜 History
 </a>
 
 </div>
@@ -940,28 +938,28 @@ async function loadDashboard(){
             return;
         }
 
-        document.getElementById("products")
+        document.getElementById("productsCount")
             .textContent = data.total_products;
 
-        document.getElementById("stock")
+        document.getElementById("stockCount")
             .textContent = data.total_stock;
 
         document.getElementById("stockValue")
             .textContent = money(data.stock_value);
 
-        document.getElementById("cash")
+        document.getElementById("cashBalance")
             .textContent = money(data.cash_balance);
 
-        document.getElementById("potential")
+        document.getElementById("potentialProfit")
             .textContent = money(data.potential_profit);
 
-        document.getElementById("sales")
+        document.getElementById("totalSales")
             .textContent = money(data.total_sales);
 
-        document.getElementById("profit")
+        document.getElementById("totalProfit")
             .textContent = money(data.total_profit);
 
-        document.getElementById("low")
+        document.getElementById("lowStock")
             .textContent = data.low_stock;
 
         if(data.low_stock > 0){showLowStockNotification(data.low_stock);}
@@ -977,7 +975,7 @@ async function loadDashboard(){
 }
 
 
-function showLowStockNotification(count){let old=document.getElementById("lowStockNotification");if(old)old.remove();const box=document.createElement("div");box.id="lowStockNotification";box.style.cssText="position:fixed;top:20px;right:20px;background:#dc2626;color:white;padding:16px 20px;border-radius:10px;box-shadow:0 8px 25px rgba(0,0,0,.25);z-index:9999;font-weight:bold;cursor:pointer";box.innerHTML=" LOW STOCK ALERT - "+count+" product(s) have stock of 5 or less.";box.onclick=()=>box.remove();document.body.appendChild(box);setTimeout(()=>box.remove(),8000);};loadDashboard();
+function showLowStockNotification(count){let old=document.getElementById("lowStockNotification");if(old)old.remove();const box=document.createElement("div");box.id="lowStockNotification";box.style.cssText="position:fixed;top:20px;right:20px;background:#dc2626;color:white;padding:16px 20px;border-radius:10px;box-shadow:0 8px 25px rgba(0,0,0,.25);z-index:9999;font-weight:bold;cursor:pointer";box.innerHTML="⚠️ LOW STOCK ALERT - "+count+" product(s) have stock of 5 or less.";box.onclick=()=>box.remove();document.body.appendChild(box);setTimeout(()=>box.remove(),8000);};loadDashboard();
 
 setInterval(
     loadDashboard,
@@ -1017,11 +1015,11 @@ PRODUCTS_HTML = """
 <div class="nav">
 
 <div class="brand">
- Products
+📦 Products
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -1033,7 +1031,7 @@ PRODUCTS_HTML = """
 <div class="box">
 
 <h2>
- Add Product
+➕ Add Product
 </h2>
 
 <div class="form-grid">
@@ -1100,7 +1098,7 @@ Use Stock In when purchasing stock.
 <input
     id="productSearch"
     class="input search"
-    placeholder=" Search..."
+    placeholder="🔎 Search..."
     oninput="filterProducts()"
 >
 
@@ -1759,11 +1757,11 @@ MOVEMENT_HTML = """
 <div class="nav">
 
 <div class="brand">
- Stock Management
+📦 Stock Management
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -1871,9 +1869,9 @@ async function loadMovementProducts(){
 
             option.textContent =
                 product.name +
-                "  Stock: " +
+                " — Stock: " +
                 product.quantity +
-                "  Buy: " +
+                " — Buy: " +
                 Number(
                     product.purchase_price
                 ).toLocaleString();
@@ -2019,11 +2017,11 @@ CASH_HTML = """
 <div class="nav">
 
 <div class="brand">
- Cash Management
+💰 Cash Management
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -2812,7 +2810,7 @@ AUTH_HTML = """
 
 <div class="auth-box">
 
-<h1> Stock Management</h1>
+<h1>📦 Stock Management</h1>
 
 <p class="muted" style="text-align:center">
 Login or create your account
@@ -3051,11 +3049,11 @@ DASHBOARD_HTML = """
 <div class="nav">
 
 <div class="brand">
- Stock Management
+📦 Stock Management
 </div>
 
 <div>
- {{ username }}
+👤 {{ username }}
 
 <a class="btn red" href="/logout">
 LOGOUT
@@ -3073,7 +3071,7 @@ LOGOUT
 <div>
 
 <h1>
-Welcome, {{ username }} 
+Welcome, {{ username }} 👋
 </h1>
 
 <p class="muted">
@@ -3133,23 +3131,23 @@ Manage stock, cash, sales and profit.
 <div class="menu">
 
 <a href="/products">
- Products
+📦 Products
 </a>
 
 <a href="/stock-in">
- Stock In
+➕ Stock In
 </a>
 
 <a href="/stock-out">
- Stock Out
+🛒 Stock Out
 </a>
 
 <a href="/cash">
- Cash
+💰 Cash
 </a>
 
 <a href="/history">
- History
+📜 History
 </a>
 
 </div>
@@ -3182,28 +3180,28 @@ async function loadDashboard(){
             return;
         }
 
-        document.getElementById("products")
+        document.getElementById("productsCount")
             .textContent = data.total_products;
 
-        document.getElementById("stock")
+        document.getElementById("stockCount")
             .textContent = data.total_stock;
 
         document.getElementById("stockValue")
             .textContent = money(data.stock_value);
 
-        document.getElementById("cash")
+        document.getElementById("cashBalance")
             .textContent = money(data.cash_balance);
 
-        document.getElementById("potential")
+        document.getElementById("potentialProfit")
             .textContent = money(data.potential_profit);
 
-        document.getElementById("sales")
+        document.getElementById("totalSales")
             .textContent = money(data.total_sales);
 
-        document.getElementById("profit")
+        document.getElementById("totalProfit")
             .textContent = money(data.total_profit);
 
-        document.getElementById("low")
+        document.getElementById("lowStock")
             .textContent = data.low_stock;
 
     }catch(error){
@@ -3257,11 +3255,11 @@ PRODUCTS_HTML = """
 <div class="nav">
 
 <div class="brand">
- Products
+📦 Products
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -3273,7 +3271,7 @@ PRODUCTS_HTML = """
 <div class="box">
 
 <h2>
- Add Product
+➕ Add Product
 </h2>
 
 <div class="form-grid">
@@ -3331,7 +3329,7 @@ Use Stock In when purchasing stock.
 <input
     id="productSearch"
     class="input search"
-    placeholder=" Search..."
+    placeholder="🔎 Search..."
     oninput="filterProducts()"
 >
 
@@ -3984,11 +3982,11 @@ MOVEMENT_HTML = """
 <div class="nav">
 
 <div class="brand">
- Stock Management
+📦 Stock Management
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -4096,9 +4094,9 @@ async function loadMovementProducts(){
 
             option.textContent =
                 product.name +
-                "  Stock: " +
+                " — Stock: " +
                 product.quantity +
-                "  Buy: " +
+                " — Buy: " +
                 Number(
                     product.purchase_price
                 ).toLocaleString();
@@ -4244,11 +4242,11 @@ CASH_HTML = """
 <div class="nav">
 
 <div class="brand">
- Cash Management
+💰 Cash Management
 </div>
 
 <a class="btn" href="/dashboard">
- Dashboard
+← Dashboard
 </a>
 
 </div>
@@ -4652,7 +4650,7 @@ BASE_CSS = """
 
 AUTH_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock Management</title><style>{{ css }}</style></head><body>
-<div class="auth"><div class="auth-box"><h1> Stock Management</h1><p class="muted" style="text-align:center">Login or create your account</p><div id="msg" class="message"></div>
+<div class="auth"><div class="auth-box"><h1>📦 Stock Management</h1><p class="muted" style="text-align:center">Login or create your account</p><div id="msg" class="message"></div>
 <input id="username" class="input" placeholder="Username" autocomplete="username"><input id="password" class="input" type="password" placeholder="Password" autocomplete="current-password"><button class="btn" onclick="login()">LOGIN</button>
 <hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0"><h3>Create account</h3><input id="rusername" class="input" placeholder="New username"><input id="rpassword" class="input" type="password" placeholder="New password"><button class="btn green" onclick="register()">REGISTER</button><p class="small muted">Password must contain at least 4 characters.</p>
 </div></div><script>
@@ -4664,33 +4662,33 @@ async function register(){const r=await fetch('/register',{method:'POST',headers
 
 DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body>
-<div class="nav"><div class="brand"> Stock Management</div><div> {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div>
-<div class="container"><div class="top"><div><h1>Welcome, {{ username }} </h1><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
+<div class="nav"><div class="brand">📦 Stock Management</div><div>👤 {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div>
+<div class="container"><div class="top"><div><h1>Welcome, {{ username }} 👋</h1><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
 <div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
-<div class="menu"><a href="/products"> Products</a><a href="/stock-in"> Stock In</a><a href="/stock-out"> Stock Out</a><a href="/cash"> Cash</a><a href="/history"> History</a></div></div>
-<script>async function load(){const r=await fetch('/dashboard-data');const d=await r.json();if(!d.success)return;products.textContent=d.total_products;stock.textContent=d.total_stock;stockValue.textContent=Number(d.stock_value).toLocaleString();cash.textContent=Number(d.cash_balance).toLocaleString();potential.textContent=Number(d.potential_profit).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();low.textContent=d.low_stock}</script></body></html>
+<div class="menu"><a href="/products">📦 Products</a><a href="/stock-in">➕ Stock In</a><a href="/stock-out">🛒 Stock Out</a><a href="/cash">💰 Cash</a><a href="/history">📜 History</a></div></div>
+<script>async function load(){const r=await fetch('/dashboard-data');const d=await r.json();if(!d.success)return;products.textContent=d.total_products;stock.textContent=d.total_stock;stockValue.textContent=Number(d.stock_value).toLocaleString();cash.textContent=Number(d.cash_balance).toLocaleString();potential.textContent=Number(d.potential_profit).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();low.textContent=d.low_stock}load();setInterval(load,5000);setInterval(()=>fetch("/api/heartbeat",{method:"POST"}),30000);fetch("/api/heartbeat",{method:"POST"})</script></body></html>
 """
 
 PRODUCTS_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Products</title><style>{{ css }}</style></head><body>
-<div class="nav"><div class="brand"> Products</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="box"><h2> Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="unitCost" class="input" type="number" min="0" step="0.01" placeholder="Unit cost"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder=" Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Unit Cost</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+<div class="nav"><div class="brand">📦 Products</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box"><h2>➕ Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="unitCost" class="input" type="number" min="0" step="0.01" placeholder="Unit cost"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder="🔎 Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Unit Cost</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
 <script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.unit_cost).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:document.getElementById("name").value.trim(),quantity:Number(document.getElementById("qty").value),purchase_price:Number(document.getElementById("purchase").value),unit_cost:Number(document.getElementById("unitCost").value),selling_price:Number(document.getElementById("selling").value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.unit_cost)||body.unit_cost<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){document.getElementById('name').value='';document.getElementById('qty').value='';document.getElementById('purchase').value='';document.getElementById('unitCost').value='';document.getElementById('selling').value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script></body></html>
 """
 
 MOVEMENT_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Stock Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="box" style="max-width:700px;margin:auto"><h1>{{ icon }} {{ title }}</h1><label>Product</label><select id="product" class="input"></select><label>Quantity</label><input id="quantity" class="input" type="number" min="1"><div id="priceBox"></div><button class="btn {{ color }}" style="width:100%;margin-top:20px" onclick="submitMove()">{{ button }}</button></div></div><script>async function load(){const r=await fetch('/api/products');const d=await r.json();product.innerHTML='<option value="">Select product</option>'+d.products.map(p=>`<option value="${p.id}" data-price="${p.purchase_price}">${p.name}  Stock: ${p.quantity}  Buy: ${Number(p.purchase_price).toLocaleString()}</option>`).join('')}async function submitMove(){const product_id=Number(product.value),quantity=Number(document.getElementById('quantity').value);if(!product_id||!Number.isInteger(quantity)||quantity<=0)return alert('Enter valid information.');const r=await fetch('{{ endpoint }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_id,quantity})});const d=await r.json();alert(d.message);if(d.success){document.getElementById('quantity').value='';load()}}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">📦 Stock Management</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="box" style="max-width:700px;margin:auto"><h1>{{ icon }} {{ title }}</h1><label>Product</label><select id="product" class="input"></select><label>Quantity</label><input id="quantity" class="input" type="number" min="1"><div id="priceBox"></div><button class="btn {{ color }}" style="width:100%;margin-top:20px" onclick="submitMove()">{{ button }}</button></div></div><script>async function load(){const r=await fetch('/api/products');const d=await r.json();product.innerHTML='<option value="">Select product</option>'+d.products.map(p=>`<option value="${p.id}" data-price="${p.purchase_price}">${p.name} — Stock: ${p.quantity} — Buy: ${Number(p.purchase_price).toLocaleString()}</option>`).join('')}async function submitMove(){const product_id=Number(product.value),quantity=Number(document.getElementById('quantity').value);if(!product_id||!Number.isInteger(quantity)||quantity<=0)return alert('Enter valid information.');const r=await fetch('{{ endpoint }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_id,quantity})});const d=await r.json();alert(d.message);if(d.success){document.getElementById('quantity').value='';load()}}load()</script></body></html>
 """
 
 CASH_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cash</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Cash Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="cards"><div class="card"><div class="title">CURRENT CASH</div><div id="balance" class="num">0</div></div></div><div class="box" style="max-width:700px;margin-top:25px"><h2>Cash Transaction</h2><select id="type" class="input"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select><label>Amount</label><input id="amount" class="input" type="number" min="0.01" step="0.01"><label>Description</label><input id="description" class="input" placeholder="Reason / description"><button class="btn green" onclick="save()">SAVE TRANSACTION</button></div></div><script>async function load(){const r=await fetch('/api/cash');const d=await r.json();balance.textContent=Number(d.balance||0).toLocaleString()}async function save(){const r=await fetch('/api/cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_type:type.value,amount:Number(amount.value),description:description.value})});const d=await r.json();alert(d.message);if(d.success){amount.value='';description.value='';load()}}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cash</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">💰 Cash Management</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><div class="cards"><div class="card"><div class="title">CURRENT CASH</div><div id="balance" class="num">0</div></div></div><div class="box" style="max-width:700px;margin-top:25px"><h2>Cash Transaction</h2><select id="type" class="input"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select><label>Amount</label><input id="amount" class="input" type="number" min="0.01" step="0.01"><label>Description</label><input id="description" class="input" placeholder="Reason / description"><button class="btn green" onclick="save()">SAVE TRANSACTION</button></div></div><script>async function load(){const r=await fetch('/api/cash');const d=await r.json();balance.textContent=Number(d.balance||0).toLocaleString()}async function save(){const r=await fetch('/api/cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_type:type.value,amount:Number(amount.value),description:description.value})});const d=await r.json();alert(d.message);if(d.success){amount.value='';description.value='';load()}}load()</script></body></html>
 """
 
 HISTORY_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>History</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Transaction History</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><input id="search" class="input search" placeholder=" Search history..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Product</th><th>Qty</th><th>Amount</th><th>Cost</th><th>Profit</th><th>Stock Before</th><th>Stock After</th><th>Cash Before</th><th>Cash After</th><th>User</th><th>Description</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div></div><script>let items=[];async function load(){const r=await fetch('/api/transactions');const d=await r.json();if(!d.success)return alert(d.message);items=d.transactions;render(items)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(t=>`<tr><td>${t.id}</td><td class="${String(t.transaction_type).includes('IN')?'profit':'loss'}">${esc(t.transaction_type)}</td><td>${esc(t.product_name||'-')}</td><td>${t.quantity??'-'}</td><td>${Number(t.amount||0).toLocaleString()}</td><td>${Number(t.cost_amount||0).toLocaleString()}</td><td class="profit">${Number(t.profit||0).toLocaleString()}</td><td>${t.stock_before??'-'}</td><td>${t.stock_after??'-'}</td><td>${Number(t.cash_before||0).toLocaleString()}</td><td>${Number(t.cash_after||0).toLocaleString()}</td><td>${esc(t.username||'-')}</td><td>${esc(t.description||'-')}</td><td>${t.created_at}</td></tr>`).join('')}function filterRows(){const q=search.value.toLowerCase();render(items.filter(t=>(String(t.transaction_type)+' '+String(t.product_name)+' '+String(t.username)+' '+String(t.description)).toLowerCase().includes(q)))}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>History</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">🧾 Transaction History</div><a class="btn" href="/dashboard">← Dashboard</a></div><div class="container"><input id="search" class="input search" placeholder="🔎 Search history..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Product</th><th>Qty</th><th>Amount</th><th>Cost</th><th>Profit</th><th>Stock Before</th><th>Stock After</th><th>Cash Before</th><th>Cash After</th><th>User</th><th>Description</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div></div><script>let items=[];async function load(){const r=await fetch('/api/transactions');const d=await r.json();if(!d.success)return alert(d.message);items=d.transactions;render(items)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(t=>`<tr><td>${t.id}</td><td class="${String(t.transaction_type).includes('IN')?'profit':'loss'}">${esc(t.transaction_type)}</td><td>${esc(t.product_name||'-')}</td><td>${t.quantity??'-'}</td><td>${Number(t.amount||0).toLocaleString()}</td><td>${Number(t.cost_amount||0).toLocaleString()}</td><td class="profit">${Number(t.profit||0).toLocaleString()}</td><td>${t.stock_before??'-'}</td><td>${t.stock_after??'-'}</td><td>${Number(t.cash_before||0).toLocaleString()}</td><td>${Number(t.cash_after||0).toLocaleString()}</td><td>${esc(t.username||'-')}</td><td>${esc(t.description||'-')}</td><td>${t.created_at}</td></tr>`).join('')}function filterRows(){const q=search.value.toLowerCase();render(items.filter(t=>(String(t.transaction_type)+' '+String(t.product_name)+' '+String(t.username)+' '+String(t.description)).toLowerCase().includes(q)))}load()</script></body></html>
 """
 
 ADMIN_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Admin Dashboard</div><div>ADMIN ONLY  {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b> PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2> LIVE ACTIVITY <span style="font-size:12px;color:#16a34a"> LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='';if(type==='STOCK OUT')icon='';else if(type==='STOCK IN')icon='';else if(type.includes('CASH'))icon='';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?`  Qty: <b>${a.quantity}</b>`:''}${a.amount?`  Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?`  Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2> Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px"><h2> User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function toggleUser(id,activate){const action=activate?'activate':'deactivate';if(!confirm('Are you sure you want to '+action+' this account?'))return;try{const r=await fetch('/api/admin/users/'+id+'/'+action,{method:'POST'});const d=await r.json();alert(d.message||'Request completed.');if(d.success)load()}catch(e){console.error(e);alert('Request failed: '+e.message)}}async function load(){const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return alert(d.message);usersCount.textContent=d.total_users;productsCount.textContent=d.total_products;stockCount.textContent=d.total_stock;cash.textContent=Number(d.total_cash).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();stockIn.textContent=d.stock_in;stockOut.textContent=d.stock_out;userRows.innerHTML=d.users.map(u=>{const secs=Number(u.last_seen_seconds);const diff=Number.isFinite(secs)?Math.max(0,secs*1000):999999999;const mins=Math.floor(diff/60000);const online=diff<120000;const status=online?" Online":mins<60?" Last seen "+mins+" minute"+(mins===1?"":"s")+" ago":" Last seen "+Math.floor(mins/60)+" hour"+(Math.floor(mins/60)===1?"":"s")+" ago";const active=Boolean(u.is_active);const action=active?`<button class="btn red" onclick="toggleUser(${u.id},false)">DEACTIVATE</button>`:`<button class="btn green" onclick="toggleUser(${u.id},true)">ACTIVATE</button>`;return `<tr><td>${u.id}</td><td><b>${u.username}</b></td><td>${u.role}</td><td>${u.created_at}</td><td>${status}<br><small>${active?"ACTIVE":"INACTIVE"}</small></td><td>${action}</td></tr>`}).join("");activity.innerHTML=d.activities.map(a=>`<tr><td>${a.id}</td><td><b>${a.username}</b></td><td>${a.transaction_type}</td><td>${a.product_name||'-'}</td><td>${a.quantity??'-'}</td><td>${Number(a.amount||0).toLocaleString()}</td><td>${Number(a.profit||0).toLocaleString()}</td><td>${a.description||'-'}</td><td>${a.created_at}</td></tr>`).join('')}load();setInterval(load,5000);setInterval(()=>fetch("/api/heartbeat",{method:"POST"}),30000);fetch("/api/heartbeat",{method:"POST"})</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand">👑 Admin Dashboard</div><div>ADMIN ONLY 👤 {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b>🔐 PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2>🔴 LIVE ACTIVITY <span style="font-size:12px;color:#16a34a">● LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='🔔';if(type==='STOCK OUT')icon='🛒';else if(type==='STOCK IN')icon='📦';else if(type.includes('CASH'))icon='💰';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?` — Qty: <b>${a.quantity}</b>`:''}${a.amount?` — Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?` — Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2>👥 Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px"><h2>👀 User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function load(){const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return alert(d.message);usersCount.textContent=d.total_users;productsCount.textContent=d.total_products;stockCount.textContent=d.total_stock;cash.textContent=Number(d.total_cash).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();stockIn.textContent=d.stock_in;stockOut.textContent=d.stock_out;userRows.innerHTML=d.users.map(u=>{const secs=Number(u.last_seen_seconds);const diff=Number.isFinite(secs)?Math.max(0,secs*1000):999999999;const mins=Math.floor(diff/60000);const online=diff<120000;const status=online?"🟢 Online":mins<60?"🟡 Last seen "+mins+" minute"+(mins===1?"":"s")+" ago":"⚪ Last seen "+Math.floor(mins/60)+" hour"+(Math.floor(mins/60)===1?"":"s")+" ago";return `<tr><td>${u.id}</td><td><b>${u.username}</b></td><td>${u.role}</td><td>${u.created_at}</td><td>${status}</td></tr>`}).join("");activity.innerHTML=d.activities.map(a=>`<tr><td>${a.id}</td><td><b>${a.username}</b></td><td>${a.transaction_type}</td><td>${a.product_name||'-'}</td><td>${a.quantity??'-'}</td><td>${Number(a.amount||0).toLocaleString()}</td><td>${Number(a.profit||0).toLocaleString()}</td><td>${a.description||'-'}</td><td>${a.created_at}</td></tr>`).join('')}load();setInterval(load,5000);setInterval(()=>fetch("/api/heartbeat",{method:"POST"}),30000);fetch("/api/heartbeat",{method:"POST"})</script></body></html>
 """
 
 @app.route("/")
@@ -4732,14 +4730,12 @@ def login():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,username,password,role,is_active FROM users WHERE username=%s", (username,))
+            cur.execute("SELECT id,username,password,role FROM users WHERE username=%s", (username,))
             user = cur.fetchone()
     finally:
         conn.close()
     if not user or not check_password_hash(user["password"], password):
         return jsonify(success=False, message="Invalid username or password."), 401
-    if not user["is_active"]:
-        return jsonify(success=False, message="Your account has been deactivated by the administrator."), 403
     session.clear()
     conn=get_db()
     try:
@@ -4923,7 +4919,7 @@ def delete_product(product_id):
 @login_required
 def stock_in_page():
     if is_admin():return redirect("/admin-dashboard")
-    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock In",icon="",button="ADD STOCK",color="green",endpoint="/api/stock-in")
+    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock In",icon="➕",button="ADD STOCK",color="green",endpoint="/api/stock-in")
 
 @app.post("/api/stock-in")
 @login_required
@@ -4955,7 +4951,7 @@ def stock_in():
 @login_required
 def stock_out_page():
     if is_admin():return redirect("/admin-dashboard")
-    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock Out / Sale",icon="",button="SELL / REMOVE STOCK",color="red",endpoint="/api/stock-out")
+    return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock Out / Sale",icon="🛒",button="SELL / REMOVE STOCK",color="red",endpoint="/api/stock-out")
 
 @app.post("/api/stock-out")
 @login_required
@@ -5078,40 +5074,10 @@ def admin_dashboard_data():
             cur.execute("SELECT COALESCE(SUM(profit),0) AS n FROM transactions WHERE transaction_type='STOCK OUT' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");total_profit=cur.fetchone()["n"]
             cur.execute("SELECT COUNT(*) AS n FROM transactions WHERE transaction_type='STOCK IN' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");stock_in=cur.fetchone()["n"]
             cur.execute("SELECT COUNT(*) AS n FROM transactions WHERE transaction_type='STOCK OUT' AND owner_id IN (SELECT id FROM users WHERE role!='admin')");stock_out=cur.fetchone()["n"]
-            cur.execute("SELECT id,username,role,is_active,created_at,last_seen,EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-last_seen)) AS last_seen_seconds FROM users WHERE role!='admin' ORDER BY id DESC");users=cur.fetchall()
+            cur.execute("SELECT id,username,role,created_at,last_seen,EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-last_seen)) AS last_seen_seconds FROM users WHERE role!='admin' ORDER BY id DESC");users=cur.fetchall()
             cur.execute("SELECT id,transaction_type,product_name,quantity,amount,profit,username,description,created_at FROM transactions WHERE owner_id IN (SELECT id FROM users WHERE role!='admin') ORDER BY id DESC LIMIT 200");activities=cur.fetchall()
     finally:conn.close()
     return jsonify(success=True,total_users=total_users,total_products=total_products,total_stock=total_stock,total_cash=float(total_cash),total_sales=float(total_sales),total_profit=float(total_profit),stock_in=stock_in,stock_out=stock_out,users=[dict(x) for x in users],activities=[dict(x) for x in activities])
-
-@app.post("/api/admin/users/<int:user_id>/activate")
-@admin_required
-def activate_user(user_id):
-    conn=get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,username,role FROM users WHERE id=%s",(user_id,))
-            user=cur.fetchone()
-            if not user:return jsonify(success=False,message="User not found."),404
-            if user["role"]=="admin":return jsonify(success=False,message="Admin account cannot be changed here."),403
-            cur.execute("UPDATE users SET is_active=TRUE WHERE id=%s",(user_id,))
-        conn.commit()
-    finally:conn.close()
-    return jsonify(success=True,message="Account activated successfully.")
-
-@app.post("/api/admin/users/<int:user_id>/deactivate")
-@admin_required
-def deactivate_user(user_id):
-    conn=get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,username,role FROM users WHERE id=%s",(user_id,))
-            user=cur.fetchone()
-            if not user:return jsonify(success=False,message="User not found."),404
-            if user["role"]=="admin":return jsonify(success=False,message="Admin account cannot be changed here."),403
-            cur.execute("UPDATE users SET is_active=FALSE WHERE id=%s",(user_id,))
-        conn.commit()
-    finally:conn.close()
-    return jsonify(success=True,message="Account deactivated successfully.")
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -5125,9 +5091,3 @@ if __name__ == "__main__":
     print("Server: http://127.0.0.1:5000")
     print("Admin: admin / admin123")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
-
-
-
-
-
-
