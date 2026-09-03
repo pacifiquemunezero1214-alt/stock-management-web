@@ -8,13 +8,7 @@ body {
     font-family: Arial, Helvetica, sans-serif;
     min-height: 100vh;
 
-    background:
-        linear-gradient(
-            135deg,
-            #0f172a,
-            #1e3a8a,
-            #2563eb
-        );
+    background: #f1f5f9;
 
     display: flex;
     justify-content: center;
