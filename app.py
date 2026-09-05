@@ -68,6 +68,9 @@ def init_database():
                     UNIQUE(owner_id, name)
                 )
             """)
+            # LOW STOCK THRESHOLD
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS threshold INTEGER NOT NULL DEFAULT 5")
+
             # PRODUCT UNIT COST
             cur.execute("""
                 ALTER TABLE products
@@ -181,6 +184,28 @@ def init_database():
                 )
             """)
 
+            # STOCK NOTIFICATIONS
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS stock_notifications (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    product_id INTEGER NOT NULL
+                        REFERENCES products(id) ON DELETE CASCADE,
+                    message TEXT NOT NULL,
+                    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP NULL
+                )
+            """)
+
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_active_stock_notification
+                ON stock_notifications(owner_id, product_id)
+                WHERE is_active=TRUE
+            """)
+
         conn.commit()
         create_default_admin(conn)
         with conn.cursor() as cur:
@@ -284,21 +309,301 @@ BASE_CSS = """
 """
 
 AUTH_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock Management</title><style>{{ css }}</style></head><body style="background-image:url(/static/pc.jpeg);background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat;">
-<div class="auth"><div class="auth-box"><h1> Stock Management</h1><p class="muted" style="text-align:center">Login or create your account</p><div id="msg" class="message"></div>
-<input id="username" class="input" placeholder="Username" autocomplete="username"><input id="password" class="input" type="password" placeholder="Password" autocomplete="current-password"><button class="btn" onclick="login()">LOGIN</button>
-<hr style="margin:25px 0;border:0;border-top:1px solid #e2e8f0"><h3>Create account</h3><input id="rusername" class="input" placeholder="New username"><input id="rpassword" class="input" type="password" placeholder="New password"><button class="btn green" onclick="register()">REGISTER</button><p class="small muted">Password must contain at least 4 characters.</p>
-</div></div><script>
-function show(t,ok=false){const m=document.getElementById('msg');m.textContent=t;m.style.display='block';m.style.background=ok?'#dcfce7':'#fee2e2';m.style.color=ok?'#166534':'#991b1b'}
-async function login(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.value.trim(),password:password.value})});const d=await r.json();if(d.success){alert("Murakaza neza, "+username.value.trim()+"!");location.href=d.redirect}else show(d.message)}
-async function register(){const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:rusername.value.trim(),password:rpassword.value})});const d=await r.json();show(d.message,d.success);if(d.success){username.value=rusername.value.trim();password.value=rpassword.value;rusername.value='';rpassword.value=''}}
-</script></body></html>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Management</title>
+<style>
+{{ css }}
+
+.auth{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    background:
+        linear-gradient(135deg,rgba(2,6,23,.88),rgba(37,99,235,.72)),
+        url("/static/pc.jpeg") center/cover fixed no-repeat;
+}
+
+.auth-box{
+    width:100%;
+    max-width:430px;
+    background:rgba(255,255,255,.97);
+    padding:38px;
+    border-radius:24px;
+    box-shadow:0 25px 70px rgba(0,0,0,.30);
+    backdrop-filter:blur(10px);
+    animation:authIn .55s ease;
+}
+
+@keyframes authIn{
+    from{opacity:0;transform:translateY(20px)}
+    to{opacity:1;transform:translateY(0)}
+}
+
+.auth-logo{
+    width:62px;
+    height:62px;
+    margin:0 auto 18px;
+    border-radius:18px;
+    background:linear-gradient(135deg,#2563eb,#7c3aed);
+    color:white;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:28px;
+    box-shadow:0 10px 25px rgba(37,99,235,.30);
+}
+
+.auth-box h1{
+    text-align:center;
+    margin:0;
+    font-size:28px;
+    color:#0f172a;
+}
+
+.auth-subtitle{
+    text-align:center;
+    color:#64748b;
+    margin:8px 0 26px;
+    font-size:14px;
+}
+
+.auth-form{
+    display:block;
+}
+
+.auth-form.hidden{
+    display:none;
+}
+
+.auth-label{
+    display:block;
+    margin:14px 0 7px;
+    font-size:13px;
+    font-weight:700;
+    color:#334155;
+}
+
+.auth-box .input{
+    width:100%;
+    margin:0 0 5px;
+    padding:13px 14px;
+    border:1px solid #cbd5e1;
+    border-radius:11px;
+    font-size:15px;
+    outline:none;
+    transition:.2s;
+    background:#fff;
+}
+
+.auth-box .input:focus{
+    border-color:#2563eb;
+    box-shadow:0 0 0 4px rgba(37,99,235,.10);
+}
+
+.auth-box .btn{
+    width:100%;
+    margin-top:18px;
+    padding:13px;
+    border-radius:11px;
+    font-size:14px;
+    transition:.2s;
+}
+
+.auth-box .btn:hover{
+    transform:translateY(-1px);
+    box-shadow:0 8px 20px rgba(0,0,0,.12);
+}
+
+.auth-switch{
+    text-align:center;
+    margin:22px 0 0;
+    font-size:14px;
+    color:#64748b;
+}
+
+.auth-switch button{
+    border:0;
+    background:none;
+    color:#2563eb;
+    font-weight:700;
+    cursor:pointer;
+    font-size:14px;
+    padding:0;
+}
+
+.auth-switch button:hover{
+    text-decoration:underline;
+}
+
+.auth-note{
+    text-align:center;
+    margin:13px 0 0;
+    color:#94a3b8;
+    font-size:12px;
+}
+
+.message{
+    padding:10px 12px;
+    border-radius:10px;
+    margin:0 0 15px;
+    display:none;
+    font-size:13px;
+    font-weight:600;
+}
+
+@media(max-width:500px){
+    .auth{
+        padding:15px;
+    }
+
+    .auth-box{
+        padding:28px 22px;
+        border-radius:20px;
+    }
+
+    .auth-box h1{
+        font-size:24px;
+    }
+}
+</style>
+</head>
+
+<body>
+<div class="auth">
+    <div class="auth-box">
+
+        <div class="auth-logo">📦</div>
+
+        <h1>Stock Management</h1>
+        <p class="auth-subtitle" id="authSubtitle">Welcome back. Please login to continue.</p>
+
+        <div id="msg" class="message"></div>
+
+        <!-- LOGIN -->
+        <div id="loginForm" class="auth-form">
+            <label class="auth-label" for="username">Username</label>
+            <input id="username" class="input" placeholder="Enter your username" autocomplete="username">
+
+            <label class="auth-label" for="password">Password</label>
+            <input id="password" class="input" type="password" placeholder="Enter your password" autocomplete="current-password">
+
+            <button class="btn" onclick="login()">LOGIN</button>
+
+            <p class="auth-switch">
+                Don't have an account?
+                <button type="button" onclick="showRegister()">Sign up</button>
+            </p>
+        </div>
+
+        <!-- REGISTER -->
+        <div id="registerForm" class="auth-form hidden">
+            <label class="auth-label" for="rusername">Username</label>
+            <input id="rusername" class="input" placeholder="Choose a username" autocomplete="username">
+
+            <label class="auth-label" for="rpassword">Password</label>
+            <input id="rpassword" class="input" type="password" placeholder="Create a password" autocomplete="new-password">
+
+            <button class="btn green" onclick="register()">CREATE ACCOUNT</button>
+
+            <p class="auth-note">Password must contain at least 4 characters.</p>
+
+            <p class="auth-switch">
+                Already have an account?
+                <button type="button" onclick="showLogin()">Login</button>
+            </p>
+        </div>
+
+    </div>
+</div>
+
+<script>
+function show(t,ok=false){
+    const m=document.getElementById('msg');
+    m.textContent=t;
+    m.style.display='block';
+    m.style.background=ok?'#dcfce7':'#fee2e2';
+    m.style.color=ok?'#166534':'#991b1b';
+}
+
+function clearMessage(){
+    const m=document.getElementById('msg');
+    m.style.display='none';
+    m.textContent='';
+}
+
+function showRegister(){
+    document.getElementById('loginForm').classList.add('hidden');
+    document.getElementById('registerForm').classList.remove('hidden');
+    document.getElementById('authSubtitle').textContent='Create your account to get started.';
+    clearMessage();
+}
+
+function showLogin(){
+    document.getElementById('registerForm').classList.add('hidden');
+    document.getElementById('loginForm').classList.remove('hidden');
+    document.getElementById('authSubtitle').textContent='Welcome back. Please login to continue.';
+    clearMessage();
+}
+
+async function login(){
+    const r=await fetch('/login',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            username:username.value.trim(),
+            password:password.value
+        })
+    });
+
+    const d=await r.json();
+
+    if(d.success){
+        alert("Murakaza neza, "+username.value.trim()+"!");
+        location.href=d.redirect;
+    }else{
+        show(d.message);
+    }
+}
+
+async function register(){
+    const r=await fetch('/register',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            username:rusername.value.trim(),
+            password:rpassword.value
+        })
+    });
+
+    const d=await r.json();
+
+    show(d.message,d.success);
+
+    if(d.success){
+        username.value=rusername.value.trim();
+        password.value=rpassword.value;
+        rusername.value='';
+        rpassword.value='';
+
+        setTimeout(showLogin,700);
+    }
+}
+</script>
+
+</body>
+</html>
 """
 
 DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body style="background-image:url(/static/pc.jpeg);background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat;">
-<div class="nav"><div class="brand"> Stock Management</div><div> {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div>
-<div class="container"><div class="top"><div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
+<div class="nav"><div class="brand"> Stock Management</div><div style="display:flex;align-items:center;gap:14px;"><button onclick="toggleNotifications()" style="position:relative;background:#0f172a;border:1px solid #334155;color:white;border-radius:10px;padding:9px 13px;font-size:20px;cursor:pointer;">&#128276;<span id="notificationBadge" style="display:none;position:absolute;top:-7px;right:-7px;background:#ef4444;color:white;border-radius:999px;min-width:21px;height:21px;font-size:12px;font-weight:700;align-items:center;justify-content:center;padding:2px 5px;">0</span></button><span>{{ username }}</span><a class="btn red" href="/logout">LOGOUT</a></div></div>
+<div id="notificationPanel" style="display:none;position:fixed;top:78px;right:25px;width:380px;max-width:calc(100vw - 30px);background:white;border-radius:15px;box-shadow:0 15px 45px rgba(0,0,0,.25);z-index:9999;overflow:hidden;"><div style="padding:16px 18px;background:#020617;color:white;display:flex;justify-content:space-between;align-items:center;"><strong>&#128276; Stock Notifications</strong><button onclick="markAllNotificationsRead()" style="border:0;background:#2563eb;color:white;border-radius:7px;padding:7px 10px;cursor:pointer;font-weight:700;font-size:12px;">Mark all as read</button></div><div id="notificationList" style="max-height:420px;overflow-y:auto;padding:10px;"><div style="padding:20px;text-align:center;color:#64748b;">No notifications</div></div></div><div class="container"><div class="top"><div><div id="rwandaTimePanel" style="margin-bottom:12px;"><div id="greetingText" style="font-size:28px;font-weight:700;line-height:1.2;"></div><div id="dateText" style="font-size:16px;font-weight:500;margin-top:4px;opacity:.85;"></div><div id="clockText" style="font-size:22px;font-weight:700;margin-top:3px;letter-spacing:1px;"></div></div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
 <div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
 <div class="menu"><a href="/products"> Products</a><a href="/stock-in"> Stock In</a><a href="/stock-out"> Stock Out</a><a href="/cash"> Cash</a><a href="/history"> History</a><a href="/debts"> Debts/Credit</a><a href="/invoice-history"> Invoice History</a><a href="/invoice"> Invoice</a></div></div>
 <script>
@@ -319,6 +624,109 @@ async function loadDashboard(){
 }
 loadDashboard();
 setInterval(loadDashboard,5000);
+
+async function loadNotifications(){
+  try{
+    const response=await fetch('/api/notifications',{cache:'no-store'});
+    const d=await response.json();
+
+    if(!d.success){
+      console.error('Notification error:',d);
+      return;
+    }
+
+    const badge=document.getElementById('notificationBadge');
+    const list=document.getElementById('notificationList');
+
+    if(d.unread_count>0){
+      badge.textContent=d.unread_count;
+      badge.style.display='flex';
+    }else{
+      badge.style.display='none';
+    }
+
+    if(!d.notifications || d.notifications.length===0){
+      list.innerHTML='<div style="padding:20px;text-align:center;color:#777;">No active stock notifications</div>';
+      return;
+    }
+
+    list.innerHTML=d.notifications.map(n=>`
+      <div style="
+        padding:14px;
+        border-bottom:1px solid #eee;
+        background:${n.is_read ? '#fff' : '#fff7f7'};
+        cursor:pointer;
+      " onclick="markNotificationRead(${n.id})">
+        <div style="font-weight:700;color:#d32f2f;">
+          &#9888; ${n.product_name}
+        </div>
+        <div style="font-size:13px;margin-top:5px;color:#555;">
+          ${n.quantity} remaining — threshold ${n.threshold}
+        </div>
+        <div style="font-size:12px;margin-top:5px;color:#888;">
+          ${n.is_read ? 'Read' : 'Unread'}
+        </div>
+      </div>
+    `).join('');
+
+  }catch(e){
+    console.error('Notification loading error:',e);
+  }
+}
+
+function toggleNotifications(){
+  const panel=document.getElementById('notificationPanel');
+
+  if(panel.style.display==='none' || panel.style.display===''){
+    panel.style.display='block';
+    loadNotifications();
+  }else{
+    panel.style.display='none';
+  }
+}
+
+async function markNotificationRead(id){
+  try{
+    await fetch('/api/notifications/mark-read/'+id,{
+      method:'POST'
+    });
+    loadNotifications();
+  }catch(e){
+    console.error('Mark notification read error:',e);
+  }
+}
+
+async function markAllNotificationsRead(){
+  try{
+    await fetch('/api/notifications/mark-all-read',{
+      method:'POST'
+    });
+    loadNotifications();
+  }catch(e){
+    console.error('Mark all notifications read error:',e);
+  }
+}
+
+loadNotifications();
+setInterval(loadNotifications,5000);
+
+</script><script>
+(function(){
+const greeting=document.getElementById('greetingText');
+const date=document.getElementById('dateText');
+const clock=document.getElementById('clockText');
+function updateRwandaTime(){
+const now=new Date();
+const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Africa/Kigali',hour:'numeric',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(now);
+let hour=Number(parts.find(x=>x.type==='hour').value);
+if(hour===24) hour=0;
+greeting.textContent=hour<12?'Good Morning':hour<17?'Good Afternoon':'Good Evening';
+date.textContent=new Intl.DateTimeFormat('en-US',{timeZone:'Africa/Kigali',weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(now);
+clock.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Kigali',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now)+' | Rwanda Time';
+}
+updateRwandaTime();
+setInterval(updateRwandaTime,1000);
+})();
 </script></body></html>
 """
 
@@ -1377,12 +1785,186 @@ def dashboard_data():
             cur.execute("SELECT COALESCE(SUM(quantity),0) AS n FROM products WHERE owner_id=%s", (user_id,)); total_stock=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(SUM(quantity*purchase_price),0) AS n FROM products WHERE owner_id=%s", (user_id,)); stock_value=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(SUM(quantity*(selling_price-purchase_price)),0) AS n FROM products WHERE owner_id=%s", (user_id,)); potential=cur.fetchone()["n"]
-            cur.execute("SELECT COUNT(*) AS n FROM products WHERE owner_id=%s AND quantity<=5", (user_id,)); low=cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM products WHERE owner_id=%s AND quantity<=threshold", (user_id,)); low=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(balance,0) AS n FROM cash_account WHERE owner_id=%s", (user_id,)); cash=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(SUM(amount),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); sales=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(SUM(profit),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); profit=cur.fetchone()["n"]
     finally: conn.close()
     return jsonify(success=True,total_products=total_products,total_stock=total_stock,stock_value=float(stock_value),potential_profit=float(potential),low_stock=low,cash_balance=float(cash),total_sales=float(sales),total_profit=float(profit))
+
+
+@app.get("/api/notifications")
+@login_required
+def notifications_api():
+    user_id = current_user_id()
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+
+            # CREATE NOTIFICATIONS FOR CURRENT LOW-STOCK PRODUCTS
+            cur.execute("""
+                SELECT id, name, quantity, threshold
+                FROM products
+                WHERE owner_id=%s
+                  AND quantity<=threshold
+                ORDER BY quantity ASC, name ASC
+            """, (user_id,))
+
+            low_products = cur.fetchall()
+
+            for product in low_products:
+                message = f"{product['name']} is low in stock: {product['quantity']} remaining (threshold {product['threshold']})."
+
+                cur.execute("""
+                    SELECT id
+                    FROM stock_notifications
+                    WHERE owner_id=%s
+                      AND product_id=%s
+                      AND is_active=TRUE
+                    LIMIT 1
+                """, (user_id, product["id"]))
+
+                existing = cur.fetchone()
+
+                if not existing:
+                    cur.execute("""
+                        INSERT INTO stock_notifications
+                            (owner_id, product_id, message)
+                        VALUES (%s,%s,%s)
+                    """, (user_id, product["id"], message))
+
+            # RESOLVE NOTIFICATIONS WHEN STOCK IS ABOVE THRESHOLD
+            cur.execute("""
+                UPDATE stock_notifications n
+                SET is_active=FALSE,
+                    resolved_at=CURRENT_TIMESTAMP
+                WHERE n.owner_id=%s
+                  AND n.is_active=TRUE
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM products p
+                      WHERE p.id=n.product_id
+                        AND p.owner_id=n.owner_id
+                        AND p.quantity<=p.threshold
+                  )
+            """, (user_id,))
+
+            # GET ACTIVE NOTIFICATIONS
+            cur.execute("""
+                SELECT
+                    n.id,
+                    n.product_id,
+                    n.message,
+                    n.is_read,
+                    n.is_active,
+                    n.created_at,
+                    p.name AS product_name,
+                    p.quantity,
+                    p.threshold
+                FROM stock_notifications n
+                JOIN products p
+                  ON p.id=n.product_id
+                WHERE n.owner_id=%s
+                  AND n.is_active=TRUE
+                ORDER BY n.is_read ASC, n.created_at DESC
+            """, (user_id,))
+
+            rows = cur.fetchall()
+
+            unread_count = sum(
+                1 for row in rows
+                if not row["is_read"]
+            )
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            unread_count=unread_count,
+            notifications=[
+                {
+                    "id": row["id"],
+                    "product_id": row["product_id"],
+                    "product_name": row["product_name"],
+                    "message": row["message"],
+                    "is_read": row["is_read"],
+                    "quantity": row["quantity"],
+                    "threshold": row["threshold"],
+                    "created_at": row["created_at"].isoformat()
+                    if row["created_at"] else None
+                }
+                for row in rows
+            ]
+        )
+
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/mark-read/<int:notification_id>")
+@login_required
+def mark_notification_read(notification_id):
+    user_id = current_user_id()
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE stock_notifications
+                SET is_read=TRUE
+                WHERE id=%s
+                  AND owner_id=%s
+                  AND is_active=TRUE
+            """, (notification_id, user_id))
+
+        conn.commit()
+
+        return jsonify(success=True)
+
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/mark-all-read")
+@login_required
+def mark_all_notifications_read():
+    user_id = current_user_id()
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE stock_notifications
+                SET is_read=TRUE
+                WHERE owner_id=%s
+                  AND is_active=TRUE
+            """, (user_id,))
+
+        conn.commit()
+
+        return jsonify(success=True)
+
+    finally:
+        conn.close()
+
+
+@app.get("/api/low-stock")
+@login_required
+def low_stock_api():
+    user_id = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,name,quantity,threshold FROM products WHERE owner_id=%s AND quantity<=threshold ORDER BY quantity ASC,name ASC",
+                (user_id,)
+            )
+            rows = cur.fetchall()
+        return jsonify(success=True, products=[dict(r) for r in rows])
+    finally:
+        conn.close()
+
 
 @app.get("/invoice")
 @login_required
