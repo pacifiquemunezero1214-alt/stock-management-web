@@ -311,7 +311,7 @@ BASE_CSS = """
 AUTH_HTML = """
 <!doctype html>
 <html>
-<head>
+<head><meta name="google-adsense-account" content="ca-pub-5757995608720452">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stock Management</title>
