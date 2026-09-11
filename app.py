@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, session, redirect, render_template_string
+﻿from flask import Flask, request, jsonify, session, redirect, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -206,6 +206,65 @@ def init_database():
                 WHERE is_active=TRUE
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    trial_start TIMESTAMP NOT NULL,
+                    trial_end TIMESTAMP NOT NULL,
+                    subscription_start TIMESTAMP NULL,
+                    subscription_end TIMESTAMP NULL,
+                    status VARCHAR(30) NOT NULL DEFAULT 'TRIAL',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS subscription_payments (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    amount NUMERIC(16,2) NOT NULL DEFAULT 0,
+                    payment_method VARCHAR(50) NOT NULL DEFAULT 'MOBILE MONEY',
+                    proof TEXT,
+                    status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+                    confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    confirmed_at TIMESTAMP NULL,
+                    notes TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                ALTER TABLE subscription_payments
+                ADD COLUMN IF NOT EXISTS proof_photo BYTEA
+            """)
+
+            cur.execute("""
+                ALTER TABLE subscription_payments
+                ADD COLUMN IF NOT EXISTS customer_name VARCHAR(200)
+            """)
+
+            cur.execute("""
+                ALTER TABLE subscription_payments
+                ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(50)
+            """)
+
+            cur.execute("""
+                ALTER TABLE subscription_payments
+                ADD COLUMN IF NOT EXISTS description TEXT
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS subscription_notifications (
+                    id SERIAL PRIMARY KEY,
+                    payment_id INTEGER REFERENCES subscription_payments(id) ON DELETE CASCADE,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    message TEXT NOT NULL,
+                    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
         conn.commit()
         create_default_admin(conn)
         with conn.cursor() as cur:
@@ -249,6 +308,68 @@ def ensure_default_accounts(conn, owner_id):
                 account_type,
                 owner_id
             ))
+
+def get_subscription_status(user_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id,
+                    status,
+                    trial_start,
+                    trial_end,
+                    subscription_start,
+                    subscription_end,
+                    CASE
+                        WHEN status = 'ACTIVE'
+                             AND subscription_end > CURRENT_TIMESTAMP
+                            THEN 'ACTIVE'
+                        WHEN status = 'TRIAL'
+                             AND trial_end > CURRENT_TIMESTAMP
+                             AND trial_end <= CURRENT_TIMESTAMP + INTERVAL '5 days'
+                            THEN 'TRIAL_WARNING'
+                        WHEN status = 'TRIAL'
+                             AND trial_end > CURRENT_TIMESTAMP
+                            THEN 'TRIAL'
+                        WHEN status = 'ACTIVE'
+                             AND subscription_end <= CURRENT_TIMESTAMP
+                            THEN 'EXPIRED'
+                        WHEN status = 'TRIAL'
+                             AND trial_end <= CURRENT_TIMESTAMP
+                            THEN 'EXPIRED'
+                        ELSE status
+                    END AS current_status,
+                    CASE
+                        WHEN status = 'TRIAL'
+                             AND trial_end > CURRENT_TIMESTAMP
+                            THEN GREATEST(
+                                0,
+                                CEIL(
+                                    EXTRACT(
+                                        EPOCH FROM (trial_end - CURRENT_TIMESTAMP)
+                                    ) / 86400
+                                )
+                            )::INTEGER
+                        ELSE NULL
+                    END AS trial_days_remaining
+                FROM subscriptions
+                WHERE user_id = %s
+            """, (user_id,))
+
+            subscription = cur.fetchone()
+
+            if not subscription:
+                return {
+                    "status": "MISSING",
+                    "current_status": "MISSING",
+                    "trial_days_remaining": 0
+                }
+
+            return dict(subscription)
+
+    finally:
+        conn.close()
 
 def get_account_id(conn, owner_id, account_code):
     with conn.cursor() as cur:
@@ -478,7 +599,7 @@ AUTH_HTML = """
 <div class="auth">
     <div class="auth-box">
 
-        <div class="auth-logo">📦</div>
+        <div class="auth-logo">&#128230;</div>
 
         <h1>Stock Management</h1>
         <p class="auth-subtitle" id="authSubtitle">Welcome back. Please login to continue.</p>
@@ -604,7 +725,56 @@ DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body style="background-image:url(/static/pc.jpeg);background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat;">
 <div class="nav"><div class="brand"> Stock Management</div><div style="display:flex;align-items:center;gap:14px;"><button onclick="toggleNotifications()" style="position:relative;background:#0f172a;border:1px solid #334155;color:white;border-radius:10px;padding:9px 13px;font-size:20px;cursor:pointer;">&#128276;<span id="notificationBadge" style="display:none;position:absolute;top:-7px;right:-7px;background:#ef4444;color:white;border-radius:999px;min-width:21px;height:21px;font-size:12px;font-weight:700;align-items:center;justify-content:center;padding:2px 5px;">0</span></button><span>{{ username }}</span><a class="btn red" href="/logout">LOGOUT</a></div></div>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5757995608720452" crossorigin="anonymous"></script><div id="notificationPanel" style="display:none;position:fixed;top:78px;right:25px;width:380px;max-width:calc(100vw - 30px);background:white;border-radius:15px;box-shadow:0 15px 45px rgba(0,0,0,.25);z-index:9999;overflow:hidden;"><div style="padding:16px 18px;background:#020617;color:white;display:flex;justify-content:space-between;align-items:center;"><strong>&#128276; Stock Notifications</strong><button onclick="markAllNotificationsRead()" style="border:0;background:#2563eb;color:white;border-radius:7px;padding:7px 10px;cursor:pointer;font-weight:700;font-size:12px;">Mark all as read</button></div><div style="padding:12px 10px;background:#fff;"><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-5757995608720452" data-ad-slot="4073979479" data-ad-format="auto" data-full-width-responsive="true"></ins><script>(adsbygoogle = window.adsbygoogle || []).push({});</script></div><div id="notificationList" style="max-height:420px;overflow-y:auto;padding:10px;"><div style="padding:20px;text-align:center;color:#64748b;">No notifications</div></div></div><div class="container"><div class="top"><div><div id="rwandaTimePanel" style="margin-bottom:12px;"><div id="greetingText" style="font-size:28px;font-weight:700;line-height:1.2;"></div><div id="dateText" style="font-size:16px;font-weight:500;margin-top:4px;opacity:.85;"></div><div id="clockText" style="font-size:22px;font-weight:700;margin-top:3px;letter-spacing:1px;"></div></div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
-<div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
+<div id="subscriptionPanel" style="margin:0 0 20px 0;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.18);">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
+<div>
+<div style="font-size:13px;font-weight:700;opacity:.8;text-transform:uppercase;letter-spacing:1px;">Subscription</div>
+<div id="subscriptionStatus" style="font-size:24px;font-weight:800;margin-top:5px;">Checking status...</div>
+<div id="subscriptionMessage" style="font-size:14px;margin-top:6px;opacity:.9;">Please wait...</div>
+</div>
+<button onclick="document.getElementById('payNowModal').style.display='flex'" style="border:0;background:#22c55e;color:white;border-radius:10px;padding:12px 22px;font-size:15px;font-weight:800;cursor:pointer;">PAY NOW</button>
+</div>
+</div><div id="payNowModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;align-items:center;justify-content:center;padding:20px;">
+<div style="width:100%;max-width:520px;background:white;color:#0f172a;border-radius:18px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+<div style="display:flex;justify-content:space-between;align-items:center;">
+<h2 style="margin:0;">PAY NOW</h2>
+<button onclick="closePayNow()" style="border:0;background:#e2e8f0;border-radius:8px;padding:7px 11px;cursor:pointer;font-weight:700;">X</button>
+</div>
+<div style="margin-top:18px;padding:15px;background:#f8fafc;border-radius:12px;">
+<div style="font-weight:700;">Subscription payment</div>
+<div style="font-size:14px;color:#475569;margin-top:5px;line-height:1.6;">
+  Pay <strong>10,000 Frw</strong> via Mobile Money.
+</div>
+<div style="margin-top:12px;padding:12px;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;">
+  <div style="font-size:13px;color:#166534;font-weight:700;">MoMo PAYMENT</div>
+  <div style="font-size:22px;font-weight:800;color:#166534;margin-top:3px;">0798386664</div>
+  <div style="font-size:13px;color:#166534;margin-top:3px;">Account name: <strong>Pacifique MUNEZERO</strong></div>
+</div>
+<div style="margin-top:16px;">
+  <label style="display:block;font-weight:700;margin-bottom:7px;">Upload MoMo payment screenshot</label>
+  <input id="subscriptionProofFile" type="file" accept="image/*" style="width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:white;font-size:14px;">
+  <div style="font-size:12px;color:#64748b;margin-top:6px;">Upload a clear photo or screenshot showing your MoMo payment.</div>
+
+  <label style="display:block;font-weight:700;margin:14px 0 7px;">Your names</label>
+  <input id="subscriptionCustomerName" type="text" placeholder="Enter your full names" style="width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font-size:14px;">
+
+  <label style="display:block;font-weight:700;margin:14px 0 7px;">Phone number</label>
+  <input id="subscriptionCustomerPhone" type="tel" placeholder="Enter your phone number" style="width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font-size:14px;">
+
+  <label style="display:block;font-weight:700;margin:14px 0 7px;">Description</label>
+  <textarea id="subscriptionDescription" rows="3" placeholder="Add any useful payment details..." style="width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font-size:14px;resize:vertical;"></textarea>
+</div>
+<div id="subscriptionPaymentMessage" style="display:none;margin-top:12px;padding:10px;border-radius:9px;font-size:13px;"></div>
+<div style="margin-top:15px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+  <button onclick="closePayNow()" class="btn">CLOSE</button>
+  <button onclick="submitSubscriptionPayment()" style="border:0;background:#16a34a;color:white;border-radius:10px;padding:11px 18px;font-weight:800;cursor:pointer;">SUBMIT PAYMENT</button>
+</div>
+</div>
+<div style="margin-top:18px;text-align:right;">
+<button onclick="closePayNow()" class="btn">CLOSE</button>
+</div>
+</div>
+</div><div class="cards"><div class="card"><div class="title">PRODUCTS</div><div id="products" class="num">0</div></div><div class="card"><div class="title">TOTAL STOCK</div><div id="stock" class="num">0</div></div><div class="card"><div class="title">STOCK VALUE</div><div id="stockValue" class="num">0</div></div><div class="card"><div class="title">CASH BALANCE</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">POTENTIAL PROFIT</div><div id="potential" class="num">0</div></div><div class="card"><div class="title">TOTAL SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">TOTAL PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">LOW STOCK</div><div id="low" class="num">0</div></div></div>
 <div class="menu"><a href="/products"> Products</a><a href="/stock-in"> Stock In</a><a href="/stock-out"> Stock Out</a><a href="/cash"> Cash</a><a href="/history"> History</a><a href="/debts"> Debts/Credit</a><a href="/invoice-history"> Invoice History</a><a href="/invoice"> Invoice</a></div></div>
 <script>
 async function loadDashboard(){
@@ -620,9 +790,155 @@ async function loadDashboard(){
   document.getElementById('sales').textContent=Number(d.total_sales||0).toLocaleString();
   document.getElementById('profit').textContent=Number(d.total_profit||0).toLocaleString();
   document.getElementById('low').textContent=Number(d.low_stock||0).toLocaleString();
+
+  const subscription=d.subscription||{};
+  const status=document.getElementById('subscriptionStatus');
+  const message=document.getElementById('subscriptionMessage');
+
+  if(status&&message){
+    const currentStatus=subscription.current_status||subscription.status||'MISSING';
+    const days=Number(subscription.trial_days_remaining||0);
+
+    if(currentStatus==='TRIAL'){
+      status.textContent='FREE TRIAL';
+      message.textContent=days+' day'+(days===1?'':'s')+' remaining. You can pay early using PAY NOW.';
+    }else if(currentStatus==='TRIAL_WARNING'){
+      status.textContent='TRIAL ENDING SOON';
+      message.textContent=days+' day'+(days===1?'':'s')+' remaining. Please pay to continue using the system.';
+    }else if(currentStatus==='ACTIVE'){
+      status.textContent='SUBSCRIPTION ACTIVE';
+      message.textContent='Your subscription is active.';
+    }else if(currentStatus==='EXPIRED'){
+      status.textContent='SUBSCRIPTION EXPIRED';
+      message.textContent='Please use PAY NOW to renew your subscription.';
+    }else{
+      status.textContent='SUBSCRIPTION';
+      message.textContent='Please use PAY NOW to activate your subscription.';
+    }
+  }
  }catch(e){console.error('Dashboard loading error:',e);}
 }
 loadDashboard();
+
+function openPayNow(){
+  const modal=document.getElementById("payNowModal");
+  if(modal){
+    modal.style.display="flex";
+  }
+}
+
+function closePayNow(){
+  const modal=document.getElementById("payNowModal");
+  if(modal){
+    modal.style.display="none";
+  }
+}
+
+async function submitSubscriptionPayment(){
+  const fileEl=document.getElementById("subscriptionProofFile");
+  const nameEl=document.getElementById("subscriptionCustomerName");
+  const phoneEl=document.getElementById("subscriptionCustomerPhone");
+  const descriptionEl=document.getElementById("subscriptionDescription");
+  const messageEl=document.getElementById("subscriptionPaymentMessage");
+
+  if(!fileEl || !nameEl || !phoneEl || !descriptionEl || !messageEl){
+    console.error("Subscription payment form elements not found.");
+    return;
+  }
+
+  const file=fileEl.files[0];
+  const name=nameEl.value.trim();
+  const phone=phoneEl.value.trim();
+  const description=descriptionEl.value.trim();
+
+  if(!file){
+    messageEl.style.display="block";
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Please upload your MoMo payment screenshot.";
+    return;
+  }
+
+  if(!file.type.startsWith("image/")){
+    messageEl.style.display="block";
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Please upload an image file.";
+    return;
+  }
+
+  if(file.size>5*1024*1024){
+    messageEl.style.display="block";
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Image is too large. Maximum size is 5 MB.";
+    return;
+  }
+
+  if(name.length<2){
+    messageEl.style.display="block";
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Please enter your full names.";
+    return;
+  }
+
+  if(phone.length<7){
+    messageEl.style.display="block";
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Please enter a valid phone number.";
+    return;
+  }
+
+  messageEl.style.display="block";
+  messageEl.style.background="#eff6ff";
+  messageEl.style.color="#1d4ed8";
+  messageEl.textContent="Submitting payment...";
+
+  const formData=new FormData();
+  formData.append("payment_proof",file);
+  formData.append("customer_name",name);
+  formData.append("customer_phone",phone);
+  formData.append("description",description);
+
+  try{
+    const response=await fetch("/api/subscription/payment",{
+      method:"POST",
+      body:formData
+    });
+
+    const data=await response.json();
+
+    if(!response.ok || !data.success){
+      messageEl.style.background="#fef2f2";
+      messageEl.style.color="#b91c1c";
+      messageEl.textContent=data.message || "Unable to submit payment.";
+      return;
+    }
+
+    messageEl.style.background="#ecfdf5";
+    messageEl.style.color="#166534";
+    messageEl.textContent=data.message || "Payment submitted successfully. Please wait for confirmation.";
+
+    fileEl.value="";
+    nameEl.value="";
+    phoneEl.value="";
+    descriptionEl.value="";
+
+    setTimeout(()=>{
+      closePayNow();
+      loadDashboard();
+    },1800);
+
+  }catch(error){
+    console.error("Subscription payment error:",error);
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Unable to submit payment right now.";
+  }
+}
+
 setInterval(loadDashboard,5000);
 
 async function loadNotifications(){
@@ -661,7 +977,7 @@ async function loadNotifications(){
           &#9888; ${n.product_name}
         </div>
         <div style="font-size:13px;margin-top:5px;color:#555;">
-          ${n.quantity} remaining — threshold ${n.threshold}
+          ${n.quantity} remaining Ã¢â‚¬â€ threshold ${n.threshold}
         </div>
         <div style="font-size:12px;margin-top:5px;color:#888;">
           ${n.is_read ? 'Read' : 'Unread'}
@@ -1577,8 +1893,139 @@ HISTORY_HTML = """
 """
 
 ADMIN_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Admin Dashboard</div><div>ADMIN ONLY  {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b> PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2> LIVE ACTIVITY <span style="font-size:12px;color:#16a34a"> LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='';if(type==='STOCK OUT')icon='';else if(type==='STOCK IN')icon='';else if(type.includes('CASH'))icon='';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?`  Qty: <b>${a.quantity}</b>`:''}${a.amount?`  Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?`  Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2> Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px"><h2> User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function toggleUser(id,activate){const action=activate?'activate':'deactivate';if(!confirm('Are you sure you want to '+action+' this account?'))return;try{const r=await fetch('/api/admin/users/'+id+'/'+action,{method:'POST'});const d=await r.json();alert(d.message||'Request completed.');if(d.success)load()}catch(e){console.error(e);alert('Request failed: '+e.message)}}async function load(){const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return alert(d.message);usersCount.textContent=d.total_users;productsCount.textContent=d.total_products;stockCount.textContent=d.total_stock;cash.textContent=Number(d.total_cash).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();stockIn.textContent=d.stock_in;stockOut.textContent=d.stock_out;userRows.innerHTML=d.users.map(u=>{const secs=Number(u.last_seen_seconds);const diff=Number.isFinite(secs)?Math.max(0,secs*1000):999999999;const mins=Math.floor(diff/60000);const online=diff<120000;const status=online?" Online":mins<60?" Last seen "+mins+" minute"+(mins===1?"":"s")+" ago":" Last seen "+Math.floor(mins/60)+" hour"+(Math.floor(mins/60)===1?"":"s")+" ago";const active=Boolean(u.is_active);const action=active?`<button class="btn red" onclick="toggleUser(${u.id},false)">DEACTIVATE</button>`:`<button class="btn green" onclick="toggleUser(${u.id},true)">ACTIVATE</button>`;return `<tr><td>${u.id}</td><td><b>${u.username}</b></td><td>${u.role}</td><td>${u.created_at}</td><td>${status}<br><small>${active?"ACTIVE":"INACTIVE"}</small></td><td>${action}</td></tr>`}).join("");activity.innerHTML=d.activities.map(a=>`<tr><td>${a.id}</td><td><b>${a.username}</b></td><td>${a.transaction_type}</td><td>${a.product_name||'-'}</td><td>${a.quantity??'-'}</td><td>${Number(a.amount||0).toLocaleString()}</td><td>${Number(a.profit||0).toLocaleString()}</td><td>${a.description||'-'}</td><td>${a.created_at}</td></tr>`).join('')}load();setInterval(load,5000);setInterval(()=>fetch("/api/heartbeat",{method:"POST"}),30000);fetch("/api/heartbeat",{method:"POST"})</script></body></html>
-"""
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Admin Dashboard</div><div>ADMIN ONLY  {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b> PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2> LIVE ACTIVITY <span style="font-size:12px;color:#16a34a"> LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='';if(type==='STOCK OUT')icon='';else if(type==='STOCK IN')icon='';else if(type.includes('CASH'))icon='';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?`  Qty: <b>${a.quantity}</b>`:''}${a.amount?`  Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?`  Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2> Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px">
+<h2> Subscription Payments</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Customer</th>
+<th>Phone</th>
+<th>Amount</th>
+<th>Description</th>
+<th>Status</th>
+<th>Submitted</th>
+<th>Proof</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="subscriptionPaymentsRows">
+<tr><td colspan="9">Loading subscription payments...</td></tr>
+</tbody>
+</table>
+</div>
+</div><div class="section" style="margin-top:25px"><h2> User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function toggleUser(id,activate){const action=activate?'activate':'deactivate';if(!confirm('Are you sure you want to '+action+' this account?'))return;try{const r=await fetch('/api/admin/users/'+id+'/'+action,{method:'POST'});const d=await r.json();alert(d.message||'Request completed.');if(d.success)load()}catch(e){console.error(e);alert('Request failed: '+e.message)}}window.deleteUser = async function deleteUser(id,username){
+if(!confirm("PERMANENT DELETE - Delete account: "+username+"? This will permanently remove the account and all data belonging to this user, including history. This cannot be undone."))return;
+try{
+const r=await fetch("/api/admin/users/"+id+"/delete",{method:"POST"});
+const d=await r.json();
+alert(d.message||"Request completed.");
+if(d.success)load();
+}catch(e){
+console.error(e);
+alert("Delete failed: "+e.message);
+}
+}
+async function load(){const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return alert(d.message);usersCount.textContent=d.total_users;productsCount.textContent=d.total_products;stockCount.textContent=d.total_stock;cash.textContent=Number(d.total_cash).toLocaleString();sales.textContent=Number(d.total_sales).toLocaleString();profit.textContent=Number(d.total_profit).toLocaleString();stockIn.textContent=d.stock_in;stockOut.textContent=d.stock_out;userRows.innerHTML=d.users.map(u=>{const secs=Number(u.last_seen_seconds);const diff=Number.isFinite(secs)?Math.max(0,secs*1000):999999999;const mins=Math.floor(diff/60000);const online=diff<120000;const status=online?" Online":mins<60?" Last seen "+mins+" minute"+(mins===1?"":"s")+" ago":" Last seen "+Math.floor(mins/60)+" hour"+(Math.floor(mins/60)===1?"":"s")+" ago";const active=Boolean(u.is_active);const action=active?`<button class="btn red" onclick="toggleUser(${u.id},false)">DEACTIVATE</button> <button class="btn red" onclick="deleteUser(${u.id},${JSON.stringify(u.username)})">DELETE</button>`:`<button class="btn green" onclick="toggleUser(${u.id},true)">ACTIVATE</button> <button class="btn red" onclick="deleteUser(${u.id},${JSON.stringify(u.username)})">DELETE</button>`;return `<tr><td>${u.id}</td><td><b>${u.username}</b></td><td>${u.role}</td><td>${u.created_at}</td><td>${status}<br><small>${active?"ACTIVE":"INACTIVE"}</small></td><td>${action}</td></tr>`}).join("");activity.innerHTML=d.activities.map(a=>`<tr><td>${a.id}</td><td><b>${a.username}</b></td><td>${a.transaction_type}</td><td>${a.product_name||'-'}</td><td>${a.quantity??'-'}</td><td>${Number(a.amount||0).toLocaleString()}</td><td>${Number(a.profit||0).toLocaleString()}</td><td>${a.description||'-'}</td><td>${a.created_at}</td></tr>`).join('')}load();setInterval(load,5000);setInterval(()=>fetch("/api/heartbeat",{method:"POST"}),30000);fetch("/api/heartbeat",{method:"POST"})</script><script>
+async function loadSubscriptionPayments(){
+  const rows=document.getElementById("subscriptionPaymentsRows");
+  if(!rows)return;
+
+  try{
+    const response=await fetch("/api/admin/subscription-payments",{cache:"no-store"});
+    const data=await response.json();
+
+    if(!response.ok || !data.success){
+      rows.innerHTML='<tr><td colspan="9">Unable to load subscription payments.</td></tr>';
+      return;
+    }
+
+    if(!data.payments || !data.payments.length){
+      rows.innerHTML='<tr><td colspan="9">No subscription payments submitted yet.</td></tr>';
+      return;
+    }
+
+    rows.innerHTML=data.payments.map(p=>{
+      const status=String(p.status||"").toUpperCase();
+      let action="-";
+
+      if(status==="PENDING"){
+        action=
+          '<button class="btn green" onclick="confirmSubscriptionPayment('+p.id+')">CONFIRM</button> '+
+          '<button class="btn red" onclick="rejectSubscriptionPayment('+p.id+')">REJECT</button>';
+      }
+
+      const proof=p.has_proof
+        ? '<button class="btn" onclick="viewSubscriptionProof('+p.id+')">VIEW</button>'
+        : '-';
+
+      return '<tr>'+
+        '<td>'+p.id+'</td>'+
+        '<td><b>'+(p.customer_name||p.username||"-")+'</b><br><small>'+p.username+'</small></td>'+
+        '<td>'+(p.customer_phone||"-")+'</td>'+
+        '<td>'+Number(p.amount||0).toLocaleString()+' Frw</td>'+
+        '<td>'+(p.description||"-")+'</td>'+
+        '<td><b>'+status+'</b></td>'+
+        '<td>'+p.created_at+'</td>'+
+        '<td>'+proof+'</td>'+
+        '<td>'+action+'</td>'+
+      '</tr>';
+    }).join("");
+
+  }catch(error){
+    console.error("Subscription payments load error:",error);
+    rows.innerHTML='<tr><td colspan="9">Unable to load subscription payments.</td></tr>';
+  }
+}
+
+window.viewSubscriptionProof=function(paymentId){
+  window.open("/api/admin/subscription-payments/"+paymentId+"/proof","_blank");
+};
+
+window.confirmSubscriptionPayment=async function(paymentId){
+  if(!confirm("Confirm this subscription payment and activate the user's subscription for 30 days?"))return;
+
+  try{
+    const response=await fetch(
+      "/api/admin/subscription-payments/"+paymentId+"/confirm",
+      {method:"POST"}
+    );
+    const data=await response.json();
+    alert(data.message||"Request completed.");
+
+    if(data.success){
+      loadSubscriptionPayments();
+    }
+  }catch(error){
+    console.error("Confirm subscription payment error:",error);
+    alert("Unable to confirm payment.");
+  }
+};
+
+window.rejectSubscriptionPayment=async function(paymentId){
+  if(!confirm("Reject this subscription payment?"))return;
+
+  try{
+    const response=await fetch(
+      "/api/admin/subscription-payments/"+paymentId+"/reject",
+      {method:"POST"}
+    );
+    const data=await response.json();
+    alert(data.message||"Request completed.");
+
+    if(data.success){
+      loadSubscriptionPayments();
+    }
+  }catch(error){
+    console.error("Reject subscription payment error:",error);
+    alert("Unable to reject payment.");
+  }
+};
+
+loadSubscriptionPayments();
+setInterval(loadSubscriptionPayments,5000);
+</script></body></html>"""
 
 def money(value):
     return Decimal(str(value or 0)).quantize(
@@ -1610,6 +2057,37 @@ def login_required(view):
                 message="Login required."
             ), 401
         return view(*args, **kwargs)
+    return wrapped
+
+
+def subscription_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not logged_in():
+            return jsonify(success=False, message="Login required."), 401
+
+        if is_admin():
+            return view(*args, **kwargs)
+
+        user_id = current_user_id()
+        subscription = get_subscription_status(user_id)
+        current_status = subscription.get("current_status")
+
+        if current_status in ("TRIAL", "TRIAL_WARNING", "ACTIVE"):
+            return view(*args, **kwargs)
+
+        message = "Your subscription has expired. Please use PAY NOW to renew your subscription."
+
+        if request.path.startswith("/api/"):
+            return jsonify(
+                success=False,
+                message=message,
+                subscription_required=True,
+                subscription=subscription
+            ), 403
+
+        return redirect("/dashboard")
+
     return wrapped
 
 
@@ -1688,6 +2166,7 @@ def register():
         with conn.cursor() as cur:
             cur.execute("INSERT INTO users(username,password,role) VALUES(%s,%s,'user') RETURNING id", (username, generate_password_hash(password)))
             user_id = cur.fetchone()["id"]
+            cur.execute("INSERT INTO subscriptions(user_id,trial_start,trial_end,status) VALUES(%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + INTERVAL '30 days','TRIAL')", (user_id,))
             ensure_default_accounts(conn, user_id)
             cur.execute("INSERT INTO cash_account(balance,owner_id) VALUES(0,%s)", (user_id,))
         conn.commit()
@@ -1767,6 +2246,120 @@ def logout():
     session.clear()
     return redirect("/")
 
+@app.post("/api/subscription/payment")
+@login_required
+def submit_subscription_payment():
+    payment_file=request.files.get("payment_proof")
+    customer_name=str(request.form.get("customer_name","")).strip()
+    customer_phone=str(request.form.get("customer_phone","")).strip()
+    description=str(request.form.get("description","")).strip()
+
+    if not payment_file:
+        return jsonify(success=False,message="Please upload your MoMo payment screenshot."),400
+
+    if not customer_name or len(customer_name)<2:
+        return jsonify(success=False,message="Please enter your full names."),400
+
+    if not customer_phone or len(customer_phone)<7:
+        return jsonify(success=False,message="Please enter a valid phone number."),400
+
+    if not payment_file.mimetype or not payment_file.mimetype.startswith("image/"):
+        return jsonify(success=False,message="Please upload an image file."),400
+
+    payment_photo=payment_file.read()
+
+    if not payment_photo:
+        return jsonify(success=False,message="The uploaded image is empty."),400
+
+    if len(payment_photo)>5*1024*1024:
+        return jsonify(success=False,message="Image is too large. Maximum size is 5 MB."),400
+
+    if len(customer_name)>200:
+        return jsonify(success=False,message="Name is too long."),400
+
+    if len(customer_phone)>50:
+        return jsonify(success=False,message="Phone number is too long."),400
+
+    if len(description)>5000:
+        return jsonify(success=False,message="Description is too long."),400
+
+    user_id=current_user_id()
+    conn=get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM subscription_payments
+                WHERE user_id=%s
+                  AND status=%s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """,(user_id,"PENDING"))
+
+            existing=cur.fetchone()
+
+            if existing:
+                return jsonify(
+                    success=False,
+                    message="You already have a pending payment awaiting confirmation."
+                ),409
+
+            cur.execute("""
+                INSERT INTO subscription_payments
+                (
+                    user_id,
+                    amount,
+                    payment_method,
+                    proof_photo,
+                    customer_name,
+                    customer_phone,
+                    description,
+                    status
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+            """,(
+                user_id,
+                10000,
+                "MOBILE MONEY",
+                payment_photo,
+                customer_name,
+                customer_phone,
+                description,
+                "PENDING"
+            ))
+
+            payment_id=cur.fetchone()["id"]
+
+            cur.execute("""
+                INSERT INTO subscription_notifications
+                (payment_id,user_id,message,is_read)
+                VALUES(%s,%s,%s,FALSE)
+            """,(
+                payment_id,
+                user_id,
+                "New subscription payment submitted. Please review and confirm the payment."
+            ))
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message="Payment submitted successfully. Please wait for confirmation."
+        )
+
+    except Exception as e:
+        conn.rollback()
+        print("Subscription payment error:",e)
+        return jsonify(
+            success=False,
+            message="Unable to submit payment right now."
+        ),500
+
+    finally:
+        conn.close()
+
 @app.get("/dashboard")
 @login_required
 def dashboard():
@@ -1790,7 +2383,8 @@ def dashboard_data():
             cur.execute("SELECT COALESCE(SUM(amount),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); sales=cur.fetchone()["n"]
             cur.execute("SELECT COALESCE(SUM(profit),0) AS n FROM transactions WHERE owner_id=%s AND transaction_type='STOCK OUT'", (user_id,)); profit=cur.fetchone()["n"]
     finally: conn.close()
-    return jsonify(success=True,total_products=total_products,total_stock=total_stock,stock_value=float(stock_value),potential_profit=float(potential),low_stock=low,cash_balance=float(cash),total_sales=float(sales),total_profit=float(profit))
+    subscription = get_subscription_status(user_id)
+    return jsonify(success=True,total_products=total_products,total_stock=total_stock,stock_value=float(stock_value),potential_profit=float(potential),low_stock=low,cash_balance=float(cash),total_sales=float(sales),total_profit=float(profit),subscription=subscription)
 
 
 @app.get("/api/notifications")
@@ -1968,6 +2562,7 @@ def low_stock_api():
 
 @app.get("/invoice")
 @login_required
+@subscription_required
 def invoice_page():
     if is_admin():
         return redirect("/admin-dashboard")
@@ -2379,6 +2974,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 
 @app.get("/api/invoices/<int:invoice_id>/pdf")
 @login_required
+@subscription_required
 def download_invoice_pdf(invoice_id):
     uid = current_user_id()
     conn = get_db()
@@ -2576,24 +3172,28 @@ def download_invoice_pdf(invoice_id):
 
 @app.get("/invoice/<int:invoice_id>")
 @login_required
+@subscription_required
 def invoice_details_page(invoice_id):
     if is_admin():
         return redirect("/admin-dashboard")
     return render_template_string(INVOICE_DETAILS_HTML, css=BASE_CSS, invoice_id=invoice_id)
 @app.get("/invoice-history")
 @login_required
+@subscription_required
 def invoice_history_page():
     if is_admin():
         return redirect("/admin-dashboard")
     return render_template_string(INVOICE_HISTORY_HTML, css=BASE_CSS)
 @app.get("/products")
 @login_required
+@subscription_required
 def products_page():
     if is_admin(): return redirect("/admin-dashboard")
     return render_template_string(PRODUCTS_HTML, css=BASE_CSS)
 
 @app.get("/api/products")
 @login_required
+@subscription_required
 def get_products():
     conn=get_db()
     try:
@@ -2605,6 +3205,7 @@ def get_products():
 
 @app.post("/api/products")
 @login_required
+@subscription_required
 def add_product():
     data=request.get_json(silent=True) or {}
     name=str(data.get("name","")).strip()
@@ -2629,6 +3230,7 @@ def add_product():
 
 @app.put("/api/products/<int:product_id>")
 @login_required
+@subscription_required
 def edit_product(product_id):
     data=request.get_json(silent=True) or {}; name=str(data.get("name","")).strip()
     try: purchase=float(data.get("purchase_price")); unit_cost=float(data.get("unit_cost",purchase)); selling=float(data.get("selling_price"))
@@ -2647,6 +3249,7 @@ def edit_product(product_id):
 
 @app.put("/api/products/<int:product_id>/stock")
 @login_required
+@subscription_required
 def edit_stock(product_id):
     data=request.get_json(silent=True) or {}; reason=str(data.get("reason","Stock correction")).strip()
     try: new_quantity=int(data.get("quantity"))
@@ -2677,6 +3280,7 @@ def edit_stock(product_id):
 
 @app.delete("/api/products/<int:product_id>")
 @login_required
+@subscription_required
 def delete_product(product_id):
     conn=get_db()
     try:
@@ -2691,12 +3295,14 @@ def delete_product(product_id):
 
 @app.get("/stock-in")
 @login_required
+@subscription_required
 def stock_in_page():
     if is_admin():return redirect("/admin-dashboard")
     return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock In",icon="",button="ADD STOCK",color="green",endpoint="/api/stock-in")
 
 @app.post("/api/stock-in")
 @login_required
+@subscription_required
 def stock_in():
     data = request.get_json(silent=True) or {}
 
@@ -2874,12 +3480,14 @@ def stock_in():
 
 @app.get("/stock-out")
 @login_required
+@subscription_required
 def stock_out_page():
     if is_admin():return redirect("/admin-dashboard")
     return render_template_string(MOVEMENT_HTML,css=BASE_CSS,title="Stock Out / Sale",icon="",button="SELL / REMOVE STOCK",color="red",endpoint="/api/stock-out")
 
 @app.post("/api/stock-out")
 @login_required
+@subscription_required
 def stock_out():
     data = request.get_json(silent=True) or {}
 
@@ -3089,6 +3697,7 @@ def stock_out():
 
 @app.get("/api/invoices")
 @login_required
+@subscription_required
 def get_invoices():
     try:
         conn = get_db()
@@ -3131,6 +3740,7 @@ def get_invoices():
         return jsonify(success=False, message=str(e)), 500
 @app.post("/api/invoices")
 @login_required
+@subscription_required
 def create_invoice():
     data = request.get_json(silent=True) or {}
     uid = current_user_id()
@@ -3590,6 +4200,7 @@ def create_invoice():
 
 @app.get("/api/invoices/<int:invoice_id>")
 @login_required
+@subscription_required
 def get_invoice_details(invoice_id):
     uid = current_user_id()
     conn = get_db()
@@ -3715,6 +4326,7 @@ def get_invoice_details(invoice_id):
     finally:
         conn.close()
 @app.get("/api/customers")
+@subscription_required
 def get_customers():
     uid=current_user_id()
     if not uid:
@@ -3729,6 +4341,7 @@ def get_customers():
         conn.close()
 
 @app.post("/api/customers")
+@subscription_required
 def create_customer():
     uid=current_user_id()
     if not uid:
@@ -3754,6 +4367,7 @@ def create_customer():
         conn.close()
 
 @app.get("/api/debts")
+@subscription_required
 def get_debts():
     uid=current_user_id()
     if not uid:
@@ -3777,6 +4391,7 @@ def get_debts():
         conn.close()
 
 @app.post("/api/debts")
+@subscription_required
 def create_debt():
     uid=current_user_id()
     if not uid:
@@ -3824,6 +4439,7 @@ def create_debt():
         conn.close()
 
 @app.post("/api/debts/<int:debt_id>/payment")
+@subscription_required
 def pay_debt(debt_id):
     uid=current_user_id()
     if not uid:return jsonify(success=False,message="Unauthorized"),401
@@ -3849,12 +4465,14 @@ def pay_debt(debt_id):
 
 @app.get("/cash")
 @login_required
+@subscription_required
 def cash_page():
     if is_admin():return redirect("/admin-dashboard")
     return render_template_string(CASH_HTML,css=BASE_CSS)
 
 @app.get("/api/cash")
 @login_required
+@subscription_required
 def get_cash():
     conn=get_db()
     try:
@@ -3865,6 +4483,7 @@ def get_cash():
 
 @app.post("/api/cash")
 @login_required
+@subscription_required
 def cash_transaction():
     data = request.get_json(silent=True) or {}
     typ = str(data.get("transaction_type", "")).strip().upper()
@@ -4001,12 +4620,14 @@ def cash_transaction():
 
 @app.get("/history")
 @login_required
+@subscription_required
 def history_page():
     if is_admin():return redirect("/admin-dashboard")
     return render_template_string(HISTORY_HTML,css=BASE_CSS)
 
 @app.get("/api/transactions")
 @login_required
+@subscription_required
 def get_transactions():
     conn=get_db()
     try:
@@ -4017,6 +4638,7 @@ def get_transactions():
 
 @app.get("/api/history")
 @login_required
+@subscription_required
 def get_history():
     conn=get_db()
     try:
@@ -4063,6 +4685,223 @@ def admin_dashboard_data():
     finally:conn.close()
     return jsonify(success=True,total_users=total_users,total_products=total_products,total_stock=total_stock,total_cash=float(total_cash),total_sales=float(total_sales),total_profit=float(total_profit),stock_in=stock_in,stock_out=stock_out,users=[dict(x) for x in users],activities=[dict(x) for x in activities])
 
+@app.get("/api/admin/subscription-payments")
+@admin_required
+def admin_subscription_payments():
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    sp.id,
+                    sp.user_id,
+                    u.username,
+                    sp.amount,
+                    sp.payment_method,
+                    sp.customer_name,
+                    sp.customer_phone,
+                    sp.description,
+                    sp.status,
+                    sp.confirmed_by,
+                    sp.confirmed_at,
+                    sp.created_at,
+                    CASE WHEN sp.proof_photo IS NOT NULL THEN TRUE ELSE FALSE END AS has_proof
+                FROM subscription_payments sp
+                JOIN users u ON u.id=sp.user_id
+                ORDER BY sp.id DESC
+            """)
+            payments=cur.fetchall()
+    finally:
+        conn.close()
+    return jsonify(success=True,payments=[dict(p) for p in payments])
+@app.post("/api/admin/subscription-payments/<int:payment_id>/confirm")
+@admin_required
+def confirm_subscription_payment(payment_id):
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,user_id,status
+                FROM subscription_payments
+                WHERE id=%s
+                FOR UPDATE
+            """,(payment_id,))
+            payment=cur.fetchone()
+
+            if not payment:
+                return jsonify(success=False,message="Subscription payment not found."),404
+
+            if payment["status"]!="PENDING":
+                return jsonify(
+                    success=False,
+                    message="This payment has already been processed."
+                ),409
+
+            cur.execute("""
+                INSERT INTO subscriptions
+                (
+                    user_id,
+                    trial_start,
+                    trial_end,
+                    status
+                )
+                VALUES
+                (
+                    %s,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP,
+                    'ACTIVE'
+                )
+                ON CONFLICT(user_id) DO NOTHING
+            """,(payment["user_id"],))
+
+            cur.execute("""
+                SELECT id
+                FROM subscriptions
+                WHERE user_id=%s
+                FOR UPDATE
+            """,(payment["user_id"],))
+            subscription=cur.fetchone()
+
+            cur.execute("""
+                UPDATE subscription_payments
+                SET
+                    status='CONFIRMED',
+                    confirmed_by=%s,
+                    confirmed_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+            """,(current_user_id(),payment_id))
+
+            cur.execute("""
+                UPDATE subscriptions
+                SET
+                    subscription_start=CURRENT_TIMESTAMP,
+                    subscription_end=CURRENT_TIMESTAMP + INTERVAL '30 days',
+                    status='ACTIVE',
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+            """,(payment["user_id"],))
+
+            cur.execute("""
+                INSERT INTO subscription_notifications
+                (payment_id,user_id,message,is_read)
+                VALUES(%s,%s,%s,FALSE)
+            """,(
+                payment_id,
+                payment["user_id"],
+                "Your subscription payment has been confirmed. Your 30-day subscription is now active."
+            ))
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message="Payment confirmed and subscription activated for 30 days."
+        )
+
+    except Exception as e:
+        conn.rollback()
+        print("Confirm subscription payment error:",e)
+        return jsonify(
+            success=False,
+            message="Unable to confirm payment right now."
+        ),500
+
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/subscription-payments/<int:payment_id>/reject")
+@admin_required
+def reject_subscription_payment(payment_id):
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,user_id,status
+                FROM subscription_payments
+                WHERE id=%s
+                FOR UPDATE
+            """,(payment_id,))
+            payment=cur.fetchone()
+
+            if not payment:
+                return jsonify(success=False,message="Subscription payment not found."),404
+
+            if payment["status"]!="PENDING":
+                return jsonify(
+                    success=False,
+                    message="This payment has already been processed."
+                ),409
+
+            cur.execute("""
+                UPDATE subscription_payments
+                SET
+                    status='REJECTED',
+                    confirmed_by=%s,
+                    confirmed_at=CURRENT_TIMESTAMP
+                WHERE id=%s
+            """,(current_user_id(),payment_id))
+
+            cur.execute("""
+                INSERT INTO subscription_notifications
+                (payment_id,user_id,message,is_read)
+                VALUES(%s,%s,%s,FALSE)
+            """,(
+                payment_id,
+                payment["user_id"],
+                "Your subscription payment was rejected. Please contact the administrator or submit a new payment."
+            ))
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message="Payment rejected successfully."
+        )
+
+    except Exception as e:
+        conn.rollback()
+        print("Reject subscription payment error:",e)
+        return jsonify(
+            success=False,
+            message="Unable to reject payment right now."
+        ),500
+
+    finally:
+        conn.close()
+@app.get("/api/admin/subscription-payments/<int:payment_id>/proof")
+@admin_required
+def admin_subscription_payment_proof(payment_id):
+    conn=get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT proof_photo
+                FROM subscription_payments
+                WHERE id=%s
+            """,(payment_id,))
+            payment=cur.fetchone()
+    finally:
+        conn.close()
+
+    if not payment or not payment["proof_photo"]:
+        return jsonify(success=False,message="Payment screenshot not found."),404
+
+    photo=bytes(payment["proof_photo"])
+
+    if photo.startswith(b"\x89PNG"):
+        mimetype="image/png"
+    elif photo.startswith(b"\xff\xd8\xff"):
+        mimetype="image/jpeg"
+    elif photo.startswith(b"GIF8"):
+        mimetype="image/gif"
+    elif photo.startswith(b"RIFF") and photo[8:12]==b"WEBP":
+        mimetype="image/webp"
+    else:
+        mimetype="application/octet-stream"
+
+    return app.response_class(photo,mimetype=mimetype)
 @app.post("/api/admin/users/<int:user_id>/activate")
 @admin_required
 def activate_user(user_id):
@@ -4077,6 +4916,117 @@ def activate_user(user_id):
         conn.commit()
     finally:conn.close()
     return jsonify(success=True,message="Account activated successfully.")
+
+@app.post("/api/admin/users/<int:user_id>/delete")
+@admin_required
+def delete_user(user_id):
+    conn = None
+    try:
+        conn = get_db()
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, role FROM users WHERE id=%s",
+                (user_id,)
+            )
+            user = cur.fetchone()
+
+            if not user:
+                return jsonify(
+                    success=False,
+                    message="User account not found."
+                ), 404
+
+            if user["role"] == "admin":
+                return jsonify(
+                    success=False,
+                    message="Admin account cannot be deleted here."
+                ), 403
+
+            cur.execute(
+                """
+                UPDATE invoices
+                SET customer_id=NULL
+                WHERE customer_id IN (
+                    SELECT id FROM customers WHERE owner_id=%s
+                )
+                AND owner_id<>%s
+                """,
+                (user_id, user_id)
+            )
+
+            cur.execute(
+                """
+                UPDATE history
+                SET product_id=NULL
+                WHERE product_id IN (
+                    SELECT id FROM products WHERE owner_id=%s
+                )
+                AND owner_id<>%s
+                """,
+                (user_id, user_id)
+            )
+
+            cur.execute(
+                """
+                UPDATE transactions
+                SET product_id=NULL
+                WHERE product_id IN (
+                    SELECT id FROM products WHERE owner_id=%s
+                )
+                AND owner_id<>%s
+                """,
+                (user_id, user_id)
+            )
+
+            cur.execute(
+                """
+                UPDATE invoice_items
+                SET product_id=NULL
+                WHERE product_id IN (
+                    SELECT id FROM products WHERE owner_id=%s
+                )
+                """,
+                (user_id,)
+            )
+
+            cur.execute(
+                """
+                UPDATE debts
+                SET product_id=NULL
+                WHERE product_id IN (
+                    SELECT id FROM products WHERE owner_id=%s
+                )
+                AND owner_id<>%s
+                """,
+                (user_id, user_id)
+            )
+
+            cur.execute(
+                "DELETE FROM users WHERE id=%s",
+                (user_id,)
+            )
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message="Account and all associated data deleted permanently."
+        )
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+
+        return jsonify(
+            success=False,
+            message="Delete failed: " + str(e)
+        ), 500
+
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.post("/api/admin/users/<int:user_id>/deactivate")
 @admin_required
@@ -4660,6 +5610,7 @@ setInterval(loadDebts,5000);
 '''
 
 @app.get("/debts")
+@subscription_required
 def debts_page():
     if is_admin():
         return redirect("/admin-dashboard")
@@ -4674,6 +5625,25 @@ if __name__ == "__main__":
     print("Server: http://127.0.0.1:5000")
     print("Admin: admin / admin123")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
