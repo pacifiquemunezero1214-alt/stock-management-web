@@ -264,6 +264,20 @@ def init_database():
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # HELP & SUPPORT
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS support_messages (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    sender_role VARCHAR(20) NOT NULL,
+                    message TEXT NOT NULL,
+                    is_read_by_user BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_read_by_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
         conn.commit()
         create_default_admin(conn)
@@ -345,11 +359,7 @@ def get_subscription_status(user_id):
                              AND trial_end > CURRENT_TIMESTAMP
                             THEN GREATEST(
                                 0,
-                                CEIL(
-                                    EXTRACT(
-                                        EPOCH FROM (trial_end - CURRENT_TIMESTAMP)
-                                    ) / 86400
-                                )
+                                (trial_end::date - CURRENT_DATE)
                             )::INTEGER
                         ELSE NULL
                     END AS trial_days_remaining
@@ -522,6 +532,11 @@ AUTH_HTML = """
     background:#fff;
 }
 
+.password-wrap{position:relative;width:100%;}
+.password-wrap .input{padding-right:48px;}
+.password-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;cursor:pointer;font-size:18px;padding:2px;line-height:1;color:#64748b;}
+.password-toggle:hover{color:#2563eb;}
+
 .auth-box .input:focus{
     border-color:#2563eb;
     box-shadow:0 0 0 4px rgba(37,99,235,.10);
@@ -612,7 +627,10 @@ AUTH_HTML = """
             <input id="username" class="input" placeholder="Enter your username" autocomplete="username">
 
             <label class="auth-label" for="password">Password</label>
-            <input id="password" class="input" type="password" placeholder="Enter your password" autocomplete="current-password">
+            <div class="password-wrap">
+                <input id="password" class="input" type="password" placeholder="Enter your password" autocomplete="current-password">
+                <button type="button" class="password-toggle" onclick="togglePassword('password', this)" aria-label="Show password">&#128065;</button>
+            </div>
 
             <button class="btn" onclick="login()">LOGIN</button>
 
@@ -628,7 +646,10 @@ AUTH_HTML = """
             <input id="rusername" class="input" placeholder="Choose a username" autocomplete="username">
 
             <label class="auth-label" for="rpassword">Password</label>
-            <input id="rpassword" class="input" type="password" placeholder="Create a password" autocomplete="new-password">
+            <div class="password-wrap">
+                <input id="rpassword" class="input" type="password" placeholder="Create a password" autocomplete="new-password">
+                <button type="button" class="password-toggle" onclick="togglePassword('rpassword', this)" aria-label="Show password">&#128065;</button>
+            </div>
 
             <button class="btn green" onclick="register()">CREATE ACCOUNT</button>
 
@@ -656,6 +677,19 @@ function clearMessage(){
     const m=document.getElementById('msg');
     m.style.display='none';
     m.textContent='';
+}
+
+function togglePassword(id, button){
+    const input=document.getElementById(id);
+    if(input.type === 'password'){
+        input.type='text';
+        button.innerHTML='&#128584;';
+        button.setAttribute('aria-label','Hide password');
+    }else{
+        input.type='password';
+        button.innerHTML='&#128065;';
+        button.setAttribute('aria-label','Show password');
+    }
 }
 
 function showRegister(){
@@ -723,7 +757,7 @@ async function register(){
 
 DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body style="background-image:url(/static/pc.jpeg);background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat;">
-<div class="nav"><div class="brand"> Stock Management</div><div style="display:flex;align-items:center;gap:14px;"><button onclick="toggleNotifications()" style="position:relative;background:#0f172a;border:1px solid #334155;color:white;border-radius:10px;padding:9px 13px;font-size:20px;cursor:pointer;">&#128276;<span id="notificationBadge" style="display:none;position:absolute;top:-7px;right:-7px;background:#ef4444;color:white;border-radius:999px;min-width:21px;height:21px;font-size:12px;font-weight:700;align-items:center;justify-content:center;padding:2px 5px;">0</span></button><span>{{ username }}</span><a class="btn red" href="/logout">LOGOUT</a></div></div>
+<div class="nav"><div class="brand"> Stock Management</div><div style="display:flex;align-items:center;gap:14px;"><button onclick="toggleNotifications()" style="position:relative;background:#0f172a;border:1px solid #334155;color:white;border-radius:10px;padding:9px 13px;font-size:20px;cursor:pointer;">&#128276;<span id="notificationBadge" style="display:none;position:absolute;top:-7px;right:-7px;background:#ef4444;color:white;border-radius:999px;min-width:21px;height:21px;font-size:12px;font-weight:700;align-items:center;justify-content:center;padding:2px 5px;">0</span></button><span>{{ username }}</span><button onclick="openChangePassword()" class="btn" style="cursor:pointer;border:0;">CHANGE PASSWORD</button><a class="btn red" href="/logout">LOGOUT</a></div></div>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5757995608720452" crossorigin="anonymous"></script><div id="notificationPanel" style="display:none;position:fixed;top:78px;right:25px;width:380px;max-width:calc(100vw - 30px);background:white;border-radius:15px;box-shadow:0 15px 45px rgba(0,0,0,.25);z-index:9999;overflow:hidden;"><div style="padding:16px 18px;background:#020617;color:white;display:flex;justify-content:space-between;align-items:center;"><strong>&#128276; Stock Notifications</strong><button onclick="markAllNotificationsRead()" style="border:0;background:#2563eb;color:white;border-radius:7px;padding:7px 10px;cursor:pointer;font-weight:700;font-size:12px;">Mark all as read</button></div><div style="padding:12px 10px;background:#fff;"><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-5757995608720452" data-ad-slot="4073979479" data-ad-format="auto" data-full-width-responsive="true"></ins><script>(adsbygoogle = window.adsbygoogle || []).push({});</script></div><div id="notificationList" style="max-height:420px;overflow-y:auto;padding:10px;"><div style="padding:20px;text-align:center;color:#64748b;">No notifications</div></div></div><div class="container"><div class="top"><div><div id="rwandaTimePanel" style="margin-bottom:12px;"><div id="greetingText" style="font-size:28px;font-weight:700;line-height:1.2;"></div><div id="dateText" style="font-size:16px;font-weight:500;margin-top:4px;opacity:.85;"></div><div id="clockText" style="font-size:22px;font-weight:700;margin-top:3px;letter-spacing:1px;"></div></div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
 <div id="subscriptionPanel" style="margin:0 0 20px 0;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.18);">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
@@ -1043,17 +1077,332 @@ clock.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Kigali',hour
 updateRwandaTime();
 setInterval(updateRwandaTime,1000);
 })();
-</script></body></html>
+</script>
+<div id="changePasswordModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;align-items:center;justify-content:center;padding:20px;">
+<div style="background:white;width:100%;max-width:430px;border-radius:16px;padding:25px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+<h2 style="margin-top:0;">Change Password</h2>
+<p id="changePasswordMessage" style="display:none;padding:10px;border-radius:8px;"></p>
+<label>Current Password</label>
+<input id="currentPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px;margin:7px 0 14px;border:1px solid #cbd5e1;border-radius:8px;">
+<label>New Password</label>
+<input id="newPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px;margin:7px 0 14px;border:1px solid #cbd5e1;border-radius:8px;">
+<label>Confirm New Password</label>
+<input id="confirmPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px;margin:7px 0 18px;border:1px solid #cbd5e1;border-radius:8px;">
+<div style="display:flex;gap:10px;justify-content:flex-end;">
+<button onclick="closeChangePassword()" style="padding:10px 16px;border:1px solid #cbd5e1;background:white;border-radius:8px;cursor:pointer;">Cancel</button>
+<button onclick="saveChangePassword()" style="padding:10px 16px;border:0;background:#2563eb;color:white;border-radius:8px;cursor:pointer;font-weight:700;">Save</button>
+</div>
+</div>
+</div>
+<script>
+function openChangePassword(){
+document.getElementById('changePasswordModal').style.display='flex';
+document.getElementById('changePasswordMessage').style.display='none';
+}
+function closeChangePassword(){
+document.getElementById('changePasswordModal').style.display='none';
+}
+async function saveChangePassword(){
+const current_password=document.getElementById('currentPassword').value;
+const new_password=document.getElementById('newPassword').value;
+const confirm_password=document.getElementById('confirmPassword').value;
+const msg=document.getElementById('changePasswordMessage');
+try{
+const r=await fetch('/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password,new_password,confirm_password})});
+const d=await r.json();
+msg.textContent=d.message||'Password change failed.';
+msg.style.display='block';
+msg.style.background=d.success?'#dcfce7':'#fee2e2';
+msg.style.color=d.success?'#166534':'#991b1b';
+if(d.success){
+document.getElementById('currentPassword').value='';
+document.getElementById('newPassword').value='';
+document.getElementById('confirmPassword').value='';
+setTimeout(closeChangePassword,1200);
+}
+}catch(e){
+msg.textContent='Password change failed. Please try again.';
+msg.style.display='block';
+msg.style.background='#fee2e2';
+msg.style.color='#991b1b';
+}
+}
+</script>
+<style>
+.help-button{
+position:fixed;
+right:20px;
+bottom:20px;
+z-index:9999;
+border:0;
+border-radius:50px;
+padding:13px 20px;
+background:#2563eb;
+color:white;
+font-weight:700;
+font-size:15px;
+cursor:pointer;
+box-shadow:0 8px 24px rgba(0,0,0,.25);
+}
+.help-button:hover{background:#1d4ed8;}
+.help-badge{
+position:absolute;
+top:-6px;
+right:-6px;
+min-width:20px;
+height:20px;
+padding:0 5px;
+border-radius:20px;
+background:#ef4444;
+color:white;
+font-size:12px;
+display:none;
+align-items:center;
+justify-content:center;
+font-weight:700;
+}
+.support-modal{
+position:fixed;
+inset:0;
+background:rgba(15,23,42,.55);
+z-index:10000;
+display:none;
+align-items:center;
+justify-content:center;
+padding:20px;
+}
+.support-box{
+width:min(520px,100%);
+height:min(680px,90vh);
+background:white;
+border-radius:16px;
+display:flex;
+flex-direction:column;
+overflow:hidden;
+box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.support-header{
+background:#020617;
+color:white;
+padding:16px 18px;
+display:flex;
+align-items:center;
+justify-content:space-between;
+}
+.support-header h2{margin:0;font-size:19px;}
+.support-close{
+border:0;
+background:transparent;
+color:white;
+font-size:25px;
+cursor:pointer;
+}
+.support-messages{
+flex:1;
+overflow-y:auto;
+padding:16px;
+background:#f8fafc;
+}
+.support-message{
+max-width:82%;
+padding:10px 13px;
+margin-bottom:10px;
+border-radius:13px;
+white-space:pre-wrap;
+word-break:break-word;
+}
+.support-user{
+margin-left:auto;
+background:#2563eb;
+color:white;
+border-bottom-right-radius:4px;
+}
+.support-admin{
+margin-right:auto;
+background:#e2e8f0;
+color:#0f172a;
+border-bottom-left-radius:4px;
+}
+.support-empty{
+text-align:center;
+color:#64748b;
+padding:40px 20px;
+}
+.support-compose{
+padding:12px;
+border-top:1px solid #e2e8f0;
+background:white;
+}
+.support-compose textarea{
+width:100%;
+height:80px;
+resize:none;
+border:1px solid #cbd5e1;
+border-radius:10px;
+padding:10px;
+font-family:inherit;
+font-size:14px;
+box-sizing:border-box;
+}
+.support-send{
+margin-top:8px;
+width:100%;
+padding:11px;
+border:0;
+border-radius:9px;
+background:#2563eb;
+color:white;
+font-weight:700;
+cursor:pointer;
+}
+.support-send:disabled{opacity:.6;cursor:not-allowed;}
+@media(max-width:600px){
+.help-button{right:14px;bottom:14px;}
+.support-modal{padding:10px;}
+.support-box{height:92vh;border-radius:12px;}
+}
+</style>
+
+<button id="helpButton" class="help-button" onclick="openSupport()">
+&#128172; Help
+<span id="helpBadge" class="help-badge">0</span>
+</button>
+
+<div id="supportModal" class="support-modal">
+<div class="support-box">
+<div class="support-header">
+<h2>Help &amp; Support</h2>
+<button class="support-close" onclick="closeSupport()" aria-label="Close">&times;</button>
+</div>
+
+<div id="supportMessages" class="support-messages">
+<div class="support-empty">Loading support messages...</div>
+</div>
+
+<div class="support-compose">
+<textarea id="supportInput" maxlength="5000" placeholder="Write your problem or question..."></textarea>
+<button id="supportSendButton" class="support-send" onclick="sendSupportMessage()">Send Message</button>
+</div>
+</div>
+</div>
+
+<script>
+let supportTimer=null;
+
+function openSupport(){
+document.getElementById('supportModal').style.display='flex';
+loadSupportMessages(true);
+document.getElementById('supportInput').focus();
+}
+
+function closeSupport(){
+document.getElementById('supportModal').style.display='none';
+}
+
+function renderSupportMessages(messages){
+const box=document.getElementById('supportMessages');
+box.innerHTML='';
+
+if(!messages || messages.length===0){
+const empty=document.createElement('div');
+empty.className='support-empty';
+empty.textContent='No messages yet. Tell us how we can help.';
+box.appendChild(empty);
+return;
+}
+
+messages.forEach(function(item){
+const div=document.createElement('div');
+div.className='support-message ' + (
+item.sender_role === 'user' ? 'support-user' : 'support-admin'
+);
+div.textContent=item.message;
+box.appendChild(div);
+});
+
+box.scrollTop=box.scrollHeight;
+}
+
+async function loadSupportMessages(markRead){
+try{
+const r=await fetch('/api/support/messages');
+const d=await r.json();
+
+if(!d.success) return;
+
+renderSupportMessages(d.messages || []);
+
+const badge=document.getElementById('helpBadge');
+
+if(d.unread_count > 0){
+badge.textContent=d.unread_count > 99 ? '99+' : d.unread_count;
+badge.style.display='flex';
+}else{
+badge.style.display='none';
+}
+
+if(markRead && d.unread_count > 0){
+await fetch('/api/support/mark-read',{method:'POST'});
+badge.style.display='none';
+}
+}catch(e){
+console.error('Support messages error:',e);
+}
+}
+
+async function sendSupportMessage(){
+const input=document.getElementById('supportInput');
+const button=document.getElementById('supportSendButton');
+const message=input.value.trim();
+
+if(!message){
+input.focus();
+return;
+}
+
+button.disabled=true;
+button.textContent='Sending...';
+
+try{
+const r=await fetch('/api/support/send',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({message:message})
+});
+
+const d=await r.json();
+
+if(d.success){
+input.value='';
+await loadSupportMessages(false);
+alert('Message sent successfully.');
+}else{
+alert(d.message || 'Message could not be sent.');
+}
+}catch(e){
+alert('Message could not be sent. Please try again.');
+}finally{
+button.disabled=false;
+button.textContent='Send Message';
+}
+}
+
+supportTimer=setInterval(function(){
+loadSupportMessages(false);
+},5000);
+</script>
+</body></html>
 """
 
 PRODUCTS_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Products</title><style>{{ css }}</style></head><body>
 <div class="nav"><div class="brand"> Products</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="box"><h2> Add Product</h2><div class="form-grid"><input id="name" class="input" placeholder="Product name"><input id="qty" class="input" type="number" min="0" placeholder="Initial stock"><input id="purchase" class="input" type="number" min="0" step="0.01" placeholder="Purchase price"><input id="unitCost" class="input" type="number" min="0" step="0.01" placeholder="Unit cost"><input id="selling" class="input" type="number" min="0" step="0.01" placeholder="Selling price"><button class="btn green" onclick="addProduct()">ADD</button></div><p class="muted">Initial stock does not change cash. Use Stock In when purchasing stock.</p></div><input id="search" class="input search" placeholder=" Search..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Product</th><th>Stock</th><th>Purchase</th><th>Unit Cost</th><th>Selling</th><th>Profit/Unit</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table></div></div>
-<script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.unit_cost).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:document.getElementById("name").value.trim(),quantity:Number(document.getElementById("qty").value),purchase_price:Number(document.getElementById("purchase").value),unit_cost:Number(document.getElementById("unitCost").value),selling_price:Number(document.getElementById("selling").value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.unit_cost)||body.unit_cost<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){document.getElementById('name').value='';document.getElementById('qty').value='';document.getElementById('purchase').value='';document.getElementById('unitCost').value='';document.getElementById('selling').value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script></body></html>
+<script>let products=[];async function load(){const r=await fetch('/api/products');const d=await r.json();if(!d.success)return alert(d.message);products=d.products;render(products)}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(p=>{const profit=Number(p.selling_price)-Number(p.purchase_price);return `<tr><td>${p.id}</td><td>${esc(p.name)}</td><td>${p.quantity}</td><td>${Number(p.purchase_price).toLocaleString()}</td><td>${Number(p.unit_cost).toLocaleString()}</td><td>${Number(p.selling_price).toLocaleString()}</td><td class="${profit>=0?'profit':'loss'}">${profit.toLocaleString()}</td><td><button class="btn" onclick="edit(${p.id})">EDIT</button> <button class="btn purple" onclick="editStock(${p.id},${p.quantity})">STOCK</button> <button class="btn red" onclick="del(${p.id})">DELETE</button></td></tr>`}).join('')}function filterRows(){const q=search.value.toLowerCase();render(products.filter(p=>(p.name+' '+p.id).toLowerCase().includes(q)))}async function addProduct(){const body={name:document.getElementById("name").value.trim(),quantity:Number(document.getElementById("qty").value),purchase_price:Number(document.getElementById("purchase").value),unit_cost:Number(document.getElementById("unitCost").value),selling_price:Number(document.getElementById("selling").value)};if(!body.name||!Number.isInteger(body.quantity)||body.quantity<0||!Number.isFinite(body.purchase_price)||body.purchase_price<0||!Number.isFinite(body.unit_cost)||body.unit_cost<0||!Number.isFinite(body.selling_price)||body.selling_price<0)return alert('Enter valid values.');const r=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();alert(d.message);if(d.success){document.getElementById('name').value='';document.getElementById('qty').value='';document.getElementById('purchase').value='';document.getElementById('unitCost').value='';document.getElementById('selling').value='';load()}}async function edit(id){const p=products.find(x=>x.id===id);const n=prompt('Product name:',p.name);if(n===null)return;const pp=prompt('Purchase price:',p.purchase_price);if(pp===null)return;const sp=prompt('Selling price:',p.selling_price);if(sp===null)return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,purchase_price:Number(pp),selling_price:Number(sp)})});const d=await r.json();alert(d.message);if(d.success)load()}async function editStock(id,current){const q=prompt('Current stock: '+current+'\\nEnter correct total stock:',current);if(q===null)return;const quantity=Number(q);if(!Number.isInteger(quantity)||quantity<0)return alert('Enter a valid whole number.');const reason=prompt('Reason for correction:','Stock correction');if(reason===null)return;const r=await fetch('/api/products/'+id+'/stock',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity,reason})});const d=await r.json();alert(d.message);if(d.success)load()}async function del(id){if(!confirm('Delete this product? Stock must be zero.'))return;const r=await fetch('/api/products/'+id,{method:'DELETE'});const d=await r.json();alert(d.message);if(d.success)load()}load()</script>
+
 """
 
 MOVEMENT_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Stock Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="box" style="max-width:700px;margin:auto"><h1>{{ icon }} {{ title }}</h1><label>Product</label><select id="product" class="input"></select><label>Quantity</label><input id="quantity" class="input" type="number" min="1"><div id="priceBox"></div><button class="btn {{ color }}" style="width:100%;margin-top:20px" onclick="submitMove()">{{ button }}</button></div></div><script>async function load(){const r=await fetch('/api/products');const d=await r.json();product.innerHTML='<option value="">Select product</option>'+d.products.map(p=>`<option value="${p.id}" data-price="${p.purchase_price}">${p.name}  Stock: ${p.quantity}  Buy: ${Number(p.purchase_price).toLocaleString()}</option>`).join('')}async function submitMove(){const product_id=Number(product.value),quantity=Number(document.getElementById('quantity').value);if(!product_id||!Number.isInteger(quantity)||quantity<=0)return alert('Enter valid information.');const r=await fetch('{{ endpoint }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_id,quantity})});const d=await r.json();alert(d.message);if(d.success){document.getElementById('quantity').value='';load()}}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Stock Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="box" style="max-width:700px;margin:auto"><h1>{{ icon }} {{ title }}</h1><label>Product</label><select id="product" class="input"></select><label>Quantity</label><input id="quantity" class="input" type="number" min="1"><div id="priceBox"></div><button class="btn {{ color }}" style="width:100%;margin-top:20px" onclick="submitMove()">{{ button }}</button></div></div><script>async function load(){const r=await fetch('/api/products');const d=await r.json();product.innerHTML='<option value="">Select product</option>'+d.products.map(p=>`<option value="${p.id}" data-price="${p.purchase_price}">${p.name}  Stock: ${p.quantity}  Buy: ${Number(p.purchase_price).toLocaleString()}</option>`).join('')}async function submitMove(){const product_id=Number(product.value),quantity=Number(document.getElementById('quantity').value);if(!product_id||!Number.isInteger(quantity)||quantity<=0)return alert('Enter valid information.');const r=await fetch('{{ endpoint }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_id,quantity})});const d=await r.json();alert(d.message);if(d.success){document.getElementById('quantity').value='';load()}}load()</script>
 """
 
 INVOICE_HTML = """
@@ -1885,15 +2234,15 @@ loadInvoices();
 """
 
 CASH_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cash</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Cash Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="cards"><div class="card"><div class="title">CURRENT CASH</div><div id="balance" class="num">0</div></div></div><div class="box" style="max-width:700px;margin-top:25px"><h2>Cash Transaction</h2><select id="type" class="input"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select><label>Amount</label><input id="amount" class="input" type="number" min="0.01" step="0.01"><label>Description</label><input id="description" class="input" placeholder="Reason / description"><button class="btn green" onclick="save()">SAVE TRANSACTION</button></div></div><script>async function load(){const r=await fetch('/api/cash');const d=await r.json();balance.textContent=Number(d.balance||0).toLocaleString()}async function save(){const r=await fetch('/api/cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_type:type.value,amount:Number(amount.value),description:description.value})});const d=await r.json();alert(d.message);if(d.success){amount.value='';description.value='';load()}}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cash</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Cash Management</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><div class="cards"><div class="card"><div class="title">CURRENT CASH</div><div id="balance" class="num">0</div></div></div><div class="box" style="max-width:700px;margin-top:25px"><h2>Cash Transaction</h2><select id="type" class="input"><option value="CASH IN">CASH IN</option><option value="CASH OUT">CASH OUT</option></select><label>Amount</label><input id="amount" class="input" type="number" min="0.01" step="0.01"><label>Description</label><input id="description" class="input" placeholder="Reason / description"><button class="btn green" onclick="save()">SAVE TRANSACTION</button></div></div><script>async function load(){const r=await fetch('/api/cash');const d=await r.json();balance.textContent=Number(d.balance||0).toLocaleString()}async function save(){const r=await fetch('/api/cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_type:type.value,amount:Number(amount.value),description:description.value})});const d=await r.json();alert(d.message);if(d.success){amount.value='';description.value='';load()}}load()</script>
 """
 
 HISTORY_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>History</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Transaction History</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><input id="search" class="input search" placeholder=" Search history..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Product</th><th>Qty</th><th>Amount</th><th>Cost</th><th>Profit</th><th>Stock Before</th><th>Stock After</th><th>Cash Before</th><th>Cash After</th><th>User</th><th>Description</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div></div><script>let items=[];async function load(){const r=await fetch('/api/transactions');const d=await r.json();if(!d.success)return alert(d.message);items=d.transactions;render(items)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(t=>`<tr><td>${t.id}</td><td class="${String(t.transaction_type).includes('IN')?'profit':'loss'}">${esc(t.transaction_type)}</td><td>${esc(t.product_name||'-')}</td><td>${t.quantity??'-'}</td><td>${Number(t.amount||0).toLocaleString()}</td><td>${Number(t.cost_amount||0).toLocaleString()}</td><td class="profit">${Number(t.profit||0).toLocaleString()}</td><td>${t.stock_before??'-'}</td><td>${t.stock_after??'-'}</td><td>${Number(t.cash_before||0).toLocaleString()}</td><td>${Number(t.cash_after||0).toLocaleString()}</td><td>${esc(t.username||'-')}</td><td>${esc(t.description||'-')}</td><td>${t.created_at}</td></tr>`).join('')}function filterRows(){const q=search.value.toLowerCase();render(items.filter(t=>(String(t.transaction_type)+' '+String(t.product_name)+' '+String(t.username)+' '+String(t.description)).toLowerCase().includes(q)))}load()</script></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>History</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Transaction History</div><a class="btn" href="/dashboard"> Dashboard</a></div><div class="container"><input id="search" class="input search" placeholder=" Search history..." oninput="filterRows()"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Product</th><th>Qty</th><th>Amount</th><th>Cost</th><th>Profit</th><th>Stock Before</th><th>Stock After</th><th>Cash Before</th><th>Cash After</th><th>User</th><th>Description</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div></div><script>let items=[];async function load(){const r=await fetch('/api/transactions');const d=await r.json();if(!d.success)return alert(d.message);items=d.transactions;render(items)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(a){rows.innerHTML=a.map(t=>`<tr><td>${t.id}</td><td class="${String(t.transaction_type).includes('IN')?'profit':'loss'}">${esc(t.transaction_type)}</td><td>${esc(t.product_name||'-')}</td><td>${t.quantity??'-'}</td><td>${Number(t.amount||0).toLocaleString()}</td><td>${Number(t.cost_amount||0).toLocaleString()}</td><td class="profit">${Number(t.profit||0).toLocaleString()}</td><td>${t.stock_before??'-'}</td><td>${t.stock_after??'-'}</td><td>${Number(t.cash_before||0).toLocaleString()}</td><td>${Number(t.cash_after||0).toLocaleString()}</td><td>${esc(t.username||'-')}</td><td>${esc(t.description||'-')}</td><td>${t.created_at}</td></tr>`).join('')}function filterRows(){const q=search.value.toLowerCase();render(items.filter(t=>(String(t.transaction_type)+' '+String(t.product_name)+' '+String(t.username)+' '+String(t.description)).toLowerCase().includes(q)))}load()</script>
 """
 
 ADMIN_HTML = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Admin Dashboard</div><div>ADMIN ONLY  {{ username }} <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b> PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2> LIVE ACTIVITY <span style="font-size:12px;color:#16a34a"> LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='';if(type==='STOCK OUT')icon='';else if(type==='STOCK IN')icon='';else if(type.includes('CASH'))icon='';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?`  Qty: <b>${a.quantity}</b>`:''}${a.amount?`  Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?`  Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2> Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px">
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Dashboard</title><style>{{ css }}</style></head><body><div class="nav"><div class="brand"> Admin Dashboard</div><div>ADMIN ONLY  {{ username }} <button onclick="openAdminChangePassword()" class="btn" style="cursor:pointer;border:0;">CHANGE PASSWORD</button> <a class="btn red" href="/logout">LOGOUT</a></div></div><div class="container"><div class="warning"><b> PRIVATE ADMIN AREA</b><br><br>Only the administrator can access this dashboard. Normal users and their activities are monitored here.</div><div class="cards"><div class="card"><div class="title">USERS</div><div id="usersCount" class="num">0</div></div><div class="card"><div class="title">PRODUCTS</div><div id="productsCount" class="num">0</div></div><div class="card"><div class="title">STOCK</div><div id="stockCount" class="num">0</div></div><div class="card"><div class="title">USERS CASH</div><div id="cash" class="num">0</div></div><div class="card"><div class="title">SALES</div><div id="sales" class="num">0</div></div><div class="card"><div class="title">PROFIT</div><div id="profit" class="num">0</div></div><div class="card"><div class="title">STOCK IN</div><div id="stockIn" class="num">0</div></div><div class="card"><div class="title">STOCK OUT</div><div id="stockOut" class="num">0</div></div></div><div class="section" style="margin-top:25px"><h2> LIVE ACTIVITY <span style="font-size:12px;color:#16a34a"> LIVE</span></h2><div id="liveActivity" style="max-height:420px;overflow-y:auto"></div></div><script>let lastLiveId=0;async function loadLiveActivity(){try{const r=await fetch('/api/admin-dashboard');const d=await r.json();if(!d.success)return;const box=document.getElementById('liveActivity');if(!box)return;const acts=(d.activities||[]).slice(0,30);if(acts.length===0){box.innerHTML='<div style="padding:20px;color:#777">No activity yet.</div>';return;}box.innerHTML=acts.map(a=>{const type=(a.transaction_type||'ACTIVITY').toUpperCase();let icon='';if(type==='STOCK OUT')icon='';else if(type==='STOCK IN')icon='';else if(type.includes('CASH'))icon='';return `<div style="padding:14px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:flex-start"><div style="font-size:24px">${icon}</div><div style="flex:1"><b>${a.username||'User'}</b> <span style="color:#555">performed</span> <b>${type}</b><br><span style="color:#555">${a.product_name||a.description||'Transaction'}</span>${a.quantity!=null?`  Qty: <b>${a.quantity}</b>`:''}${a.amount?`  Amount: <b>${Number(a.amount).toLocaleString()} Frw</b>`:''}${a.profit?`  Profit: <b>${Number(a.profit).toLocaleString()} Frw</b>`:''}<br><small style="color:#888">${a.created_at||''}</small></div></div>`}).join('');if(acts[0]&&acts[0].id>lastLiveId){lastLiveId=acts[0].id;}}catch(e){console.error('Live activity error:',e);}}loadLiveActivity();setInterval(loadLiveActivity,2000);</script><div class="section" style="margin-top:25px"><h2> Registered Users</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="section" style="margin-top:25px">
 <h2> Subscription Payments</h2>
 <div class="table-wrap">
 <table>
@@ -2025,7 +2374,189 @@ window.rejectSubscriptionPayment=async function(paymentId){
 
 loadSubscriptionPayments();
 setInterval(loadSubscriptionPayments,5000);
-</script></body></html>"""
+
+</script>
+ style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;align-items:center;justify-content:center;padding:20px;"><div style="background:white;width:100%;max-width:430px;border-radius:16px;padding:25px;"><h2 style="margin-top:0;">Change Password</h2><p id="adminChangePasswordMessage" style="display:none;padding:10px;border-radius:8px;"></p><label>Current Password</label><input id="adminCurrentPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px;margin:7px 0 14px;"><label>New Password</label><input id="adminNewPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px;margin:7px 0 14px;"><label>Confirm New Password</label><input id="adminConfirmPassword" type="password" style="width:100%;box-sizing:border-box;padding:11px 0 18px;"><div style="display:flex;gap:10px;justify-content:flex-end;"><button onclick="closeAdminChangePassword()">Cancel</button><button onclick="saveAdminChangePassword()">Save</button></div></div></div><script>function openAdminChangePassword(){document.getElementById("adminChangePasswordModal").style.display="flex";document.getElementById("adminChangePasswordMessage").style.display="none";}function closeAdminChangePassword(){document.getElementById("adminChangePasswordModal").style.display="none";}async function saveAdminChangePassword(){const current_password=document.getElementById("adminCurrentPassword").value;const new_password=document.getElementById("adminNewPassword").value;const confirm_password=document.getElementById("adminConfirmPassword").value;const msg=document.getElementById("adminChangePasswordMessage");try{const r=await fetch("/change-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_password,new_password,confirm_password})});const d=await r.json();msg.textContent=d.message||"Password change failed.";msg.style.display="block";msg.style.background=d.success?"#dcfce7":"#fee2e2";msg.style.color=d.success?"#166534":"#991b1b";if(d.success){document.getElementById("adminCurrentPassword").value="";document.getElementById("adminNewPassword").value="";document.getElementById("adminConfirmPassword").value="";setTimeout(closeAdminChangePassword,1200);}}catch(e){msg.textContent="Password change failed. Please try again.";msg.style.display="block";msg.style.background="#fee2e2";msg.style.color="#991b1b";}}</script>
+<style>
+.admin-support{margin:25px 0;background:#fff;border-radius:14px;padding:20px;box-shadow:0 4px 15px rgba(0,0,0,.08);}
+.admin-support-grid{display:grid;grid-template-columns:220px 1fr;gap:15px;}
+.support-users{border:1px solid #e2e8f0;border-radius:10px;overflow:auto;max-height:500px;}
+.support-user-item{padding:12px;border-bottom:1px solid #e2e8f0;cursor:pointer;}
+.support-user-item:hover{background:#f1f5f9;}
+.support-user-item.active{background:#dbeafe;}
+.support-unread{float:right;background:#ef4444;color:#fff;border-radius:20px;padding:2px 7px;font-size:11px;font-weight:700;}
+.admin-thread{border:1px solid #e2e8f0;border-radius:10px;display:flex;flex-direction:column;height:500px;}
+.admin-thread-header{padding:12px 15px;border-bottom:1px solid #e2e8f0;font-weight:700;}
+.admin-thread-messages{flex:1;overflow-y:auto;padding:15px;background:#f8fafc;}
+.admin-msg{max-width:80%;padding:9px 12px;border-radius:12px;margin-bottom:9px;white-space:pre-wrap;word-break:break-word;}
+.admin-msg-user{background:#e2e8f0;color:#0f172a;margin-right:auto;}
+.admin-msg-admin{background:#2563eb;color:#fff;margin-left:auto;}
+.admin-reply{padding:10px;border-top:1px solid #e2e8f0;display:flex;gap:8px;}
+.admin-reply textarea{flex:1;height:55px;resize:none;border:1px solid #cbd5e1;border-radius:8px;padding:9px;font-family:inherit;}
+.admin-reply button{border:0;background:#2563eb;color:#fff;border-radius:8px;padding:0 18px;font-weight:700;cursor:pointer;}
+@media(max-width:700px){.admin-support-grid{grid-template-columns:1fr}.support-users{max-height:220px}.admin-thread{height:450px}}
+</style>
+
+<div class="admin-support">
+<h2 style="margin-top:0;">&#128172; Support</h2>
+<div class="admin-support-grid">
+
+<div>
+<div id="supportUsers" class="support-users">
+<div style="padding:15px;color:#64748b;">Loading...</div>
+</div>
+</div>
+
+<div class="admin-thread">
+<div id="adminThreadHeader" class="admin-thread-header">
+Select a user
+</div>
+
+<div id="adminThreadMessages" class="admin-thread-messages">
+<div style="text-align:center;color:#64748b;padding:40px;">
+Select a user to view the conversation.
+</div>
+</div>
+
+<div class="admin-reply">
+<textarea id="adminSupportInput" maxlength="5000" placeholder="Write your reply..."></textarea>
+<button onclick="sendAdminSupportReply()">Reply</button>
+</div>
+</div>
+
+</div>
+</div>
+
+<script>
+let selectedSupportUser=null;
+
+async function loadAdminSupportUsers(){
+try{
+const r=await fetch('/api/admin/support');
+const d=await r.json();
+if(!d.success)return;
+
+const box=document.getElementById('supportUsers');
+box.innerHTML='';
+
+if(!d.users || d.users.length===0){
+box.innerHTML='<div style="padding:15px;color:#64748b;">No support messages yet.</div>';
+return;
+}
+
+d.users.forEach(function(user){
+const item=document.createElement('div');
+item.className='support-user-item';
+if(selectedSupportUser===user.id)item.classList.add('active');
+
+const name=document.createElement('span');
+name.textContent=user.username;
+
+item.appendChild(name);
+
+if(Number(user.unread_count)>0){
+const badge=document.createElement('span');
+badge.className='support-unread';
+badge.textContent=user.unread_count;
+item.appendChild(badge);
+}
+
+item.onclick=function(){
+openAdminSupportThread(user.id,user.username);
+};
+
+box.appendChild(item);
+});
+}catch(e){
+console.error('Admin support error:',e);
+}
+}
+
+async function openAdminSupportThread(userId,username){
+selectedSupportUser=userId;
+document.getElementById('adminThreadHeader').textContent='Support: '+username;
+document.getElementById('adminThreadMessages').innerHTML=
+'<div style="text-align:center;padding:30px;color:#64748b;">Loading...</div>';
+
+await loadAdminSupportUsers();
+
+try{
+const r=await fetch('/api/admin/support/'+userId);
+const d=await r.json();
+
+if(!d.success){
+document.getElementById('adminThreadMessages').textContent=d.message||'Unable to load conversation.';
+return;
+}
+
+renderAdminSupportMessages(d.messages||[]);
+}catch(e){
+document.getElementById('adminThreadMessages').textContent='Unable to load conversation.';
+}
+}
+
+function renderAdminSupportMessages(messages){
+const box=document.getElementById('adminThreadMessages');
+box.innerHTML='';
+
+if(!messages.length){
+box.textContent='No messages yet.';
+return;
+}
+
+messages.forEach(function(item){
+const div=document.createElement('div');
+div.className='admin-msg '+(
+item.sender_role==='admin'?'admin-msg-admin':'admin-msg-user'
+);
+div.textContent=item.message;
+box.appendChild(div);
+});
+
+box.scrollTop=box.scrollHeight;
+}
+
+async function sendAdminSupportReply(){
+if(!selectedSupportUser)return;
+
+const input=document.getElementById('adminSupportInput');
+const message=input.value.trim();
+
+if(!message){
+input.focus();
+return;
+}
+
+try{
+const r=await fetch('/api/admin/support/'+selectedSupportUser+'/reply',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({message:message})
+});
+
+const d=await r.json();
+
+if(!d.success){
+alert(d.message||'Reply failed.');
+return;
+}
+
+input.value='';
+
+const header=document.getElementById('adminThreadHeader');
+const username=header.textContent.replace('Support: ','');
+await openAdminSupportThread(selectedSupportUser,username);
+}catch(e){
+alert('Reply failed. Please try again.');
+}
+}
+
+loadAdminSupportUsers();
+
+setInterval(function(){
+loadAdminSupportUsers();
+},5000);</script>
+</body></html>"""
 
 def money(value):
     return Decimal(str(value or 0)).quantize(
@@ -2560,6 +3091,293 @@ def low_stock_api():
         conn.close()
 
 
+
+@app.get("/api/support/messages")
+@login_required
+def support_messages_api():
+    user_id = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, sender_role, message,
+                       is_read_by_user, is_read_by_admin, created_at
+                FROM support_messages
+                WHERE user_id=%s
+                ORDER BY id ASC
+            """, (user_id,))
+            rows = cur.fetchall()
+
+            unread = sum(
+                1 for r in rows
+                if r["sender_role"] == "admin"
+                and not r["is_read_by_user"]
+            )
+
+        return jsonify(
+            success=True,
+            unread_count=unread,
+            messages=[
+                {
+                    "id": r["id"],
+                    "sender_role": r["sender_role"],
+                    "message": r["message"],
+                    "created_at": r["created_at"].isoformat()
+                    if r["created_at"] else None
+                }
+                for r in rows
+            ]
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/support/send")
+@login_required
+def support_send():
+    data = request.get_json(silent=True) or {}
+    message = (data.get("message") or "").strip()
+
+    if not message:
+        return jsonify(
+            success=False,
+            message="Please enter a message."
+        ), 400
+
+    if len(message) > 5000:
+        return jsonify(
+            success=False,
+            message="Message is too long."
+        ), 400
+
+    user_id = current_user_id()
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO support_messages
+                (
+                    user_id,
+                    sender_role,
+                    message,
+                    is_read_by_user,
+                    is_read_by_admin
+                )
+                VALUES(%s, 'user', %s, TRUE, FALSE)
+                RETURNING id, created_at
+            """, (user_id, message))
+
+            row = cur.fetchone()
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message_id=row["id"],
+            created_at=row["created_at"].isoformat()
+        )
+
+    finally:
+        conn.close()
+
+
+@app.post("/api/support/mark-read")
+@login_required
+def support_mark_read():
+    user_id = current_user_id()
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE support_messages
+                SET is_read_by_user=TRUE
+                WHERE user_id=%s
+                  AND sender_role='admin'
+            """, (user_id,))
+
+        conn.commit()
+
+        return jsonify(success=True)
+
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/support")
+@admin_required
+def admin_support_users():
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    u.id,
+                    u.username,
+                    COUNT(sm.id) AS message_count,
+                    COUNT(sm.id) FILTER (
+                        WHERE sm.sender_role='user'
+                          AND sm.is_read_by_admin=FALSE
+                    ) AS unread_count,
+                    MAX(sm.created_at) AS last_message_at
+                FROM users u
+                JOIN support_messages sm
+                    ON sm.user_id=u.id
+                WHERE u.role!='admin'
+                GROUP BY u.id, u.username
+                ORDER BY last_message_at DESC NULLS LAST
+            """)
+            rows = cur.fetchall()
+
+        return jsonify(
+            success=True,
+            users=[
+                {
+                    "id": r["id"],
+                    "username": r["username"],
+                    "message_count": r["message_count"],
+                    "unread_count": r["unread_count"],
+                    "last_message_at":
+                        r["last_message_at"].isoformat()
+                        if r["last_message_at"] else None
+                }
+                for r in rows
+            ]
+        )
+
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/support/<int:user_id>")
+@admin_required
+def admin_support_thread(user_id):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, username
+                FROM users
+                WHERE id=%s AND role!='admin'
+            """, (user_id,))
+
+            user = cur.fetchone()
+
+            if not user:
+                return jsonify(
+                    success=False,
+                    message="User not found."
+                ), 404
+
+            cur.execute("""
+                UPDATE support_messages
+                SET is_read_by_admin=TRUE
+                WHERE user_id=%s
+                  AND sender_role='user'
+            """, (user_id,))
+
+            cur.execute("""
+                SELECT
+                    id,
+                    sender_role,
+                    message,
+                    is_read_by_user,
+                    is_read_by_admin,
+                    created_at
+                FROM support_messages
+                WHERE user_id=%s
+                ORDER BY id ASC
+            """, (user_id,))
+
+            rows = cur.fetchall()
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            user={
+                "id": user["id"],
+                "username": user["username"]
+            },
+            messages=[
+                {
+                    "id": r["id"],
+                    "sender_role": r["sender_role"],
+                    "message": r["message"],
+                    "created_at":
+                        r["created_at"].isoformat()
+                        if r["created_at"] else None
+                }
+                for r in rows
+            ]
+        )
+
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/support/<int:user_id>/reply")
+@admin_required
+def admin_support_reply(user_id):
+    data = request.get_json(silent=True) or {}
+    message = (data.get("message") or "").strip()
+
+    if not message:
+        return jsonify(
+            success=False,
+            message="Please enter a message."
+        ), 400
+
+    if len(message) > 5000:
+        return jsonify(
+            success=False,
+            message="Message is too long."
+        ), 400
+
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM users
+                WHERE id=%s AND role!='admin'
+            """, (user_id,))
+
+            if not cur.fetchone():
+                return jsonify(
+                    success=False,
+                    message="User not found."
+                ), 404
+
+            cur.execute("""
+                INSERT INTO support_messages
+                (
+                    user_id,
+                    sender_role,
+                    message,
+                    is_read_by_user,
+                    is_read_by_admin
+                )
+                VALUES(%s, 'admin', %s, FALSE, TRUE)
+                RETURNING id, created_at
+            """, (user_id, message))
+
+            row = cur.fetchone()
+
+        conn.commit()
+
+        return jsonify(
+            success=True,
+            message_id=row["id"],
+            created_at=row["created_at"].isoformat()
+        )
+
+    finally:
+        conn.close()
 @app.get("/invoice")
 @login_required
 @subscription_required
@@ -5625,6 +6443,32 @@ if __name__ == "__main__":
     print("Server: http://127.0.0.1:5000")
     print("Admin: admin / admin123")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
