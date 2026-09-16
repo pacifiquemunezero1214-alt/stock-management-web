@@ -51,6 +51,8 @@ def init_database():
 
             # PRODUCTS
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0')
+            cur.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP NULL')
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS products (
@@ -2230,29 +2232,93 @@ def login():
     data = request.get_json(silent=True) or {}
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", ""))
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,username,password,role,is_active FROM users WHERE username=%s", (username,))
+            cur.execute(
+                "SELECT id,username,password,role,is_active,failed_login_attempts,locked_until FROM users WHERE username=%s FOR UPDATE",
+                (username,)
+            )
             user = cur.fetchone()
+
+            if not user:
+                conn.rollback()
+                return jsonify(success=False, message="Invalid username or password."), 401
+
+            if user["locked_until"] is not None:
+                cur.execute(
+                    "SELECT CURRENT_TIMESTAMP < %s AS is_locked",
+                    (user["locked_until"],)
+                )
+                lock_status = cur.fetchone()
+
+                if lock_status["is_locked"]:
+                    conn.rollback()
+                    return jsonify(
+                        success=False,
+                        message="Too many failed login attempts. Your account is temporarily locked. Please try again in 15 minutes."
+                    ), 429
+
+                cur.execute(
+                    "UPDATE users SET failed_login_attempts=0, locked_until=NULL WHERE id=%s",
+                    (user["id"],)
+                )
+                user["failed_login_attempts"] = 0
+
+            if not check_password_hash(user["password"], password):
+                attempts = int(user["failed_login_attempts"] or 0) + 1
+
+                if attempts >= 6:
+                    cur.execute(
+                        "UPDATE users SET failed_login_attempts=6, locked_until=CURRENT_TIMESTAMP + INTERVAL '15 minutes' WHERE id=%s",
+                        (user["id"],)
+                    )
+                    conn.commit()
+                    return jsonify(
+                        success=False,
+                        message="Too many failed login attempts. Your account has been temporarily locked for 15 minutes."
+                    ), 429
+
+                cur.execute(
+                    "UPDATE users SET failed_login_attempts=%s WHERE id=%s",
+                    (attempts, user["id"])
+                )
+                conn.commit()
+
+                remaining = 6 - attempts
+                return jsonify(
+                    success=False,
+                    message=f"Invalid username or password. {remaining} attempts remaining before temporary lock."
+                ), 401
+
+            if not user["is_active"]:
+                conn.rollback()
+                return jsonify(
+                    success=False,
+                    message="Your account has been deactivated by the administrator."
+                ), 403
+
+            cur.execute(
+                "UPDATE users SET failed_login_attempts=0, locked_until=NULL, last_seen=CURRENT_TIMESTAMP WHERE id=%s",
+                (user["id"],)
+            )
+            conn.commit()
+
     finally:
         conn.close()
-    if not user or not check_password_hash(user["password"], password):
-        return jsonify(success=False, message="Invalid username or password."), 401
-    if not user["is_active"]:
-        return jsonify(success=False, message="Your account has been deactivated by the administrator."), 403
+
     session.clear()
-    conn=get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE users SET last_seen=CURRENT_TIMESTAMP WHERE id=%s",(user["id"],))
-        conn.commit()
-    finally:
-        conn.close()
     session["user_id"] = user["id"]
     session["username"] = user["username"]
     session["role"] = user["role"]
-    return jsonify(success=True, message="Login successful!", redirect="/admin-dashboard" if user["role"] == "admin" else "/dashboard")
+
+    return jsonify(
+        success=True,
+        message="Login successful!",
+        redirect="/admin-dashboard" if user["role"] == "admin" else "/dashboard"
+    )
+
 
 @app.post("/change-password")
 @login_required
