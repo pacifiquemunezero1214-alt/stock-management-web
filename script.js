@@ -176,3 +176,21 @@ document
         }
 
     });
+const loginPassword = document.getElementById("loginPassword");
+const toggleLoginPassword = document.getElementById("toggleLoginPassword");
+
+if (loginPassword && toggleLoginPassword) {
+    toggleLoginPassword.addEventListener("click", function () {
+
+        if (loginPassword.type === "password") {
+            loginPassword.type = "text";
+            toggleLoginPassword.textContent = "🙈";
+            toggleLoginPassword.setAttribute("aria-label", "Hide password");
+        } else {
+            loginPassword.type = "password";
+            toggleLoginPassword.textContent = "👁️";
+            toggleLoginPassword.setAttribute("aria-label", "Show password");
+        }
+
+    });
+}
