@@ -722,7 +722,28 @@ async function register(){
 DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard</title><style>{{ css }}</style></head><body style="background-image:url(/static/pc.jpeg);background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat;">
 <div class="nav"><div class="brand"> Stock Management</div><div style="display:flex;align-items:center;gap:14px;"><button onclick="toggleNotifications()" style="position:relative;background:#0f172a;border:1px solid #334155;color:white;border-radius:10px;padding:9px 13px;font-size:20px;cursor:pointer;">&#128276;<span id="notificationBadge" style="display:none;position:absolute;top:-7px;right:-7px;background:#ef4444;color:white;border-radius:999px;min-width:21px;height:21px;font-size:12px;font-weight:700;align-items:center;justify-content:center;padding:2px 5px;">0</span></button><span>{{ username }}</span><button onclick="openChangePassword()" class="btn" style="cursor:pointer;border:0;">CHANGE PASSWORD</button><a class="btn red" href="/logout">LOGOUT</a></div></div>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5757995608720452" crossorigin="anonymous"></script><div id="notificationPanel" style="display:none;position:fixed;top:78px;right:25px;width:380px;max-width:calc(100vw - 30px);background:white;border-radius:15px;box-shadow:0 15px 45px rgba(0,0,0,.25);z-index:9999;overflow:hidden;"><div style="padding:16px 18px;background:#020617;color:white;display:flex;justify-content:space-between;align-items:center;"><strong>&#128276; Stock Notifications</strong><button onclick="markAllNotificationsRead()" style="border:0;background:#2563eb;color:white;border-radius:7px;padding:7px 10px;cursor:pointer;font-weight:700;font-size:12px;">Mark all as read</button></div><div style="padding:12px 10px;background:#fff;"><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-5757995608720452" data-ad-slot="4073979479" data-ad-format="auto" data-full-width-responsive="true"></ins><script>(adsbygoogle = window.adsbygoogle || []).push({});</script></div><div id="notificationList" style="max-height:420px;overflow-y:auto;padding:10px;"><div style="padding:20px;text-align:center;color:#64748b;">No notifications</div></div></div><div class="container"><div class="top"><div><div id="rwandaTimePanel" style="margin-bottom:12px;"><div id="greetingText" style="font-size:28px;font-weight:700;line-height:1.2;"></div><div id="dateText" style="font-size:16px;font-weight:500;margin-top:4px;opacity:.85;"></div><div id="clockText" style="font-size:22px;font-weight:700;margin-top:3px;letter-spacing:1px;"></div></div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p></div></div>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5757995608720452" crossorigin="anonymous"></script><div id="notificationPanel" style="display:none;position:fixed;top:78px;right:25px;width:380px;max-width:calc(100vw - 30px);background:white;border-radius:15px;box-shadow:0 15px 45px rgba(0,0,0,.25);z-index:9999;overflow:hidden;"><div style="padding:16px 18px;background:#020617;color:white;display:flex;justify-content:space-between;align-items:center;"><strong>&#128276; Stock Notifications</strong><button onclick="markAllNotificationsRead()" style="border:0;background:#2563eb;color:white;border-radius:7px;padding:7px 10px;cursor:pointer;font-weight:700;font-size:12px;">Mark all as read</button></div><div style="padding:12px 10px;background:#fff;"><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-5757995608720452" data-ad-slot="4073979479" data-ad-format="auto" data-full-width-responsive="true"></ins><script>(adsbygoogle = window.adsbygoogle || []).push({});</script></div><div id="notificationList" style="max-height:420px;overflow-y:auto;padding:10px;"><div style="padding:20px;text-align:center;color:#64748b;">No notifications</div></div></div><div class="container"><div class="top"><div><div id="rwandaTimePanel" style="margin-bottom:12px;"><div id="greetingText" style="font-size:28px;font-weight:700;line-height:1.2;"></div><div id="dateText" style="font-size:16px;font-weight:500;margin-top:4px;opacity:.85;"></div><div id="clockText" style="font-size:22px;font-weight:700;margin-top:3px;letter-spacing:1px;"></div></div><h1 id="welcomeText">&#128075; Welcome, {{ username }} </h1><style>#welcomeText{animation:welcomeFade 3s ease-in-out infinite;}@keyframes welcomeFade{0%,100%{opacity:1;transform:translateY(0);}50%{opacity:0;transform:translateY(-12px);}}</style><p class="muted">Manage stock, cash, sales and profit.</p>
+<div id="pwaInstallCard" style="display:flex;align-items:center;gap:12px;margin:0 0 20px 0;padding:14px;background:rgba(255,255,255,.96);border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 8px 25px rgba(0,0,0,.12);color:#0f172a;">
+    <div style="width:46px;height:46px;min-width:46px;border-radius:12px;background:#0f172a;display:flex;align-items:center;justify-content:center;font-size:25px;">
+        &#128230;
+    </div>
+
+    <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:800;">
+            Install Stock Manager
+        </div>
+
+        <div style="font-size:12px;color:#64748b;margin-top:3px;">
+            Install the app for faster access.
+        </div>
+    </div>
+
+    <button type="button"
+            id="installStockAppBtn"
+            style="border:0;border-radius:10px;padding:10px 13px;background:#0f172a;color:white;font-size:11px;font-weight:800;letter-spacing:.4px;cursor:pointer;white-space:nowrap;">
+        INSTALL APP
+    </button>
+</div></div></div>
 <div id="subscriptionPanel" style="margin:0 0 20px 0;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.18);">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
 <div>
@@ -1041,7 +1062,240 @@ clock.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Kigali',hour
 updateRwandaTime();
 setInterval(updateRwandaTime,1000);
 })();
-</script></body></html>
+</script>
+
+<script>
+/* ============================================================
+   STOCK MANAGEMENT PWA
+   ============================================================ */
+
+(function () {
+
+    let deferredInstallPrompt = null;
+
+    const installCard =
+        document.getElementById("pwaInstallCard");
+
+    const installButton =
+        document.getElementById("installStockAppBtn");
+
+
+    function isStandalone() {
+
+        return (
+            window.matchMedia(
+                "(display-mode: standalone)"
+            ).matches
+            ||
+            window.navigator.standalone === true
+        );
+
+    }
+
+
+    function hideInstallCard() {
+
+        if (installCard) {
+            installCard.style.display = "none";
+        }
+
+    }
+
+
+    function showInstallCard() {
+
+        if (
+            installCard &&
+            !isStandalone()
+        ) {
+            installCard.style.display = "flex";
+        }
+
+    }
+
+
+    /* ========================================================
+       INITIAL CHECK
+       ======================================================== */
+
+    if (isStandalone()) {
+
+        hideInstallCard();
+
+    } else {
+
+        showInstallCard();
+
+    }
+
+
+    /* ========================================================
+       CAPTURE BROWSER INSTALL PROMPT
+       ======================================================== */
+
+    window.addEventListener(
+        "beforeinstallprompt",
+        function (event) {
+
+            event.preventDefault();
+
+            deferredInstallPrompt = event;
+
+            showInstallCard();
+
+        }
+    );
+
+
+    /* ========================================================
+       INSTALL BUTTON
+       ======================================================== */
+
+    if (installButton) {
+
+        installButton.addEventListener(
+            "click",
+            async function () {
+
+                if (deferredInstallPrompt) {
+
+                    const promptEvent =
+                        deferredInstallPrompt;
+
+                    deferredInstallPrompt = null;
+
+                    try {
+
+                        await promptEvent.prompt();
+
+                        const result =
+                            await promptEvent.userChoice;
+
+
+                        if (
+                            result.outcome === "accepted"
+                        ) {
+
+                            hideInstallCard();
+
+                        } else {
+
+                            showInstallCard();
+
+                        }
+
+                    } catch (error) {
+
+                        console.error(
+                            "PWA installation error:",
+                            error
+                        );
+
+                        showInstallCard();
+
+                    }
+
+                    return;
+
+                }
+
+
+                alert(
+                    "To install Stock Manager, use your browser menu and choose 'Install Stock Manager' or 'Add to Home screen'."
+                );
+
+            }
+        );
+
+    }
+
+
+    /* ========================================================
+       INSTALLED EVENT
+       ======================================================== */
+
+    window.addEventListener(
+        "appinstalled",
+        function () {
+
+            deferredInstallPrompt = null;
+
+            hideInstallCard();
+
+            console.log(
+                "Stock Management installed successfully."
+            );
+
+        }
+    );
+
+
+    /* ========================================================
+       SERVICE WORKER
+       ======================================================== */
+
+    if ("serviceWorker" in navigator) {
+
+        window.addEventListener(
+            "load",
+            function () {
+
+                navigator.serviceWorker.register(
+                    "/service-worker.js"
+                )
+                .then(
+                    function (registration) {
+
+                        console.log(
+                            "Stock Manager service worker registered.",
+                            registration.scope
+                        );
+
+                    }
+                )
+                .catch(
+                    function (error) {
+
+                        console.error(
+                            "Service worker registration failed:",
+                            error
+                        );
+
+                    }
+                );
+
+            }
+        );
+
+    }
+
+
+    /* ========================================================
+       CHECK WHEN PAGE RETURNS
+       ======================================================== */
+
+    window.addEventListener(
+        "pageshow",
+        function () {
+
+            if (isStandalone()) {
+
+                hideInstallCard();
+
+            } else {
+
+                showInstallCard();
+
+            }
+
+        }
+    );
+
+
+})();
+</script>
+
+</body></html>
 """
 
 PRODUCTS_HTML = """
