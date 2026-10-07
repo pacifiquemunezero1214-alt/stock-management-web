@@ -237,24 +237,35 @@ if (loginPassword && toggleLoginPassword) {
             installCard &&
             !isStandalone()
         ) {
-
             installCard.style.display = "flex";
-
         }
 
     }
 
 
-    /* Already installed */
+    /* ========================================================
+       CHECK IF ALREADY INSTALLED
+       ======================================================== */
 
     if (isStandalone()) {
 
         hideInstallCard();
 
+    } else {
+
+        /*
+         * Show the install card immediately.
+         * The native installation prompt will be used
+         * automatically when the browser makes it available.
+         */
+        showInstallCard();
+
     }
 
 
-    /* Browser says the app can be installed */
+    /* ========================================================
+       BROWSER INSTALL PROMPT
+       ======================================================== */
 
     window.addEventListener(
         "beforeinstallprompt",
@@ -270,7 +281,9 @@ if (loginPassword && toggleLoginPassword) {
     );
 
 
-    /* Install button */
+    /* ========================================================
+       INSTALL BUTTON
+       ======================================================== */
 
     if (installButton) {
 
@@ -278,49 +291,60 @@ if (loginPassword && toggleLoginPassword) {
             "click",
             async function () {
 
-                if (!deferredInstallPrompt) {
+                /*
+                 * If Chrome has provided the native PWA
+                 * installation prompt, open it.
+                 */
+                if (deferredInstallPrompt) {
+
+                    const promptEvent =
+                        deferredInstallPrompt;
+
+                    deferredInstallPrompt = null;
+
+                    try {
+
+                        await promptEvent.prompt();
+
+                        const result =
+                            await promptEvent.userChoice;
+
+
+                        if (
+                            result.outcome === "accepted"
+                        ) {
+
+                            hideInstallCard();
+
+                        } else {
+
+                            showInstallCard();
+
+                        }
+
+                    } catch (error) {
+
+                        console.error(
+                            "PWA installation error:",
+                            error
+                        );
+
+                        showInstallCard();
+
+                    }
 
                     return;
 
                 }
 
 
-                const promptEvent =
-                    deferredInstallPrompt;
-
-                deferredInstallPrompt = null;
-
-
-                try {
-
-                    await promptEvent.prompt();
-
-                    const result =
-                        await promptEvent.userChoice;
-
-
-                    if (
-                        result.outcome === "accepted"
-                    ) {
-
-                        hideInstallCard();
-
-                    } else {
-
-                        showInstallCard();
-
-                    }
-
-                } catch (error) {
-
-                    console.error(
-                        "PWA installation error:",
-                        error
-                    );
-
-                    showInstallCard();
-
-                }
+                /*
+                 * If the browser has not provided the native
+                 * prompt yet, give the user a clear instruction.
+                 */
+                alert(
+                    "To install Stock Manager, use your browser menu and choose 'Install Stock Manager' or 'Add to Home screen'."
+                );
 
             }
         );
@@ -328,7 +352,9 @@ if (loginPassword && toggleLoginPassword) {
     }
 
 
-    /* App successfully installed */
+    /* ========================================================
+       APP INSTALLED
+       ======================================================== */
 
     window.addEventListener(
         "appinstalled",
@@ -346,7 +372,9 @@ if (loginPassword && toggleLoginPassword) {
     );
 
 
-    /* Check again when page becomes visible */
+    /* ========================================================
+       CHECK AGAIN WHEN PAGE BECOMES VISIBLE
+       ======================================================== */
 
     window.addEventListener(
         "pageshow",
@@ -356,7 +384,7 @@ if (loginPassword && toggleLoginPassword) {
 
                 hideInstallCard();
 
-            } else if (deferredInstallPrompt) {
+            } else {
 
                 showInstallCard();
 
