@@ -1066,7 +1066,7 @@ setInterval(updateRwandaTime,1000);
 
 <script>
 /* ============================================================
-   STOCK MANAGEMENT PWA
+   STOCK MANAGEMENT PWA - NATIVE INSTALL
    ============================================================ */
 
 (function () {
@@ -1081,41 +1081,29 @@ setInterval(updateRwandaTime,1000);
 
 
     function isStandalone() {
-
         return (
-            window.matchMedia(
-                "(display-mode: standalone)"
-            ).matches
-            ||
+            window.matchMedia("(display-mode: standalone)").matches ||
             window.navigator.standalone === true
         );
-
     }
 
 
     function hideInstallCard() {
-
         if (installCard) {
             installCard.style.display = "none";
         }
-
     }
 
 
     function showInstallCard() {
-
-        if (
-            installCard &&
-            !isStandalone()
-        ) {
+        if (installCard && !isStandalone()) {
             installCard.style.display = "flex";
         }
-
     }
 
 
     /* ========================================================
-       INITIAL CHECK
+       CURRENT INSTALLATION STATUS
        ======================================================== */
 
     if (isStandalone()) {
@@ -1130,12 +1118,16 @@ setInterval(updateRwandaTime,1000);
 
 
     /* ========================================================
-       CAPTURE BROWSER INSTALL PROMPT
+       NATIVE INSTALL PROMPT
        ======================================================== */
 
     window.addEventListener(
         "beforeinstallprompt",
         function (event) {
+
+            console.log(
+                "Native PWA install prompt available."
+            );
 
             event.preventDefault();
 
@@ -1159,18 +1151,22 @@ setInterval(updateRwandaTime,1000);
 
                 if (deferredInstallPrompt) {
 
-                    const promptEvent =
+                    const installEvent =
                         deferredInstallPrompt;
 
                     deferredInstallPrompt = null;
 
                     try {
 
-                        await promptEvent.prompt();
+                        await installEvent.prompt();
 
                         const result =
-                            await promptEvent.userChoice;
+                            await installEvent.userChoice;
 
+                        console.log(
+                            "Install result:",
+                            result.outcome
+                        );
 
                         if (
                             result.outcome === "accepted"
@@ -1187,7 +1183,7 @@ setInterval(updateRwandaTime,1000);
                     } catch (error) {
 
                         console.error(
-                            "PWA installation error:",
+                            "Install prompt error:",
                             error
                         );
 
@@ -1196,12 +1192,13 @@ setInterval(updateRwandaTime,1000);
                     }
 
                     return;
-
                 }
 
 
                 alert(
-                    "To install Stock Manager, use your browser menu and choose 'Install Stock Manager' or 'Add to Home screen'."
+                    "Installation is not available yet. " +
+                    "Please open the Chrome menu (⋮) and choose " +
+                    "'Install Stock Manager' or 'Add to Home screen'."
                 );
 
             }
@@ -1211,20 +1208,20 @@ setInterval(updateRwandaTime,1000);
 
 
     /* ========================================================
-       INSTALLED EVENT
+       APP INSTALLED
        ======================================================== */
 
     window.addEventListener(
         "appinstalled",
         function () {
 
+            console.log(
+                "Stock Manager was installed."
+            );
+
             deferredInstallPrompt = null;
 
             hideInstallCard();
-
-            console.log(
-                "Stock Management installed successfully."
-            );
 
         }
     );
@@ -1241,13 +1238,16 @@ setInterval(updateRwandaTime,1000);
             function () {
 
                 navigator.serviceWorker.register(
-                    "/service-worker.js"
+                    "/service-worker.js",
+                    {
+                        scope: "/"
+                    }
                 )
                 .then(
                     function (registration) {
 
                         console.log(
-                            "Stock Manager service worker registered.",
+                            "Stock Manager service worker registered:",
                             registration.scope
                         );
 
@@ -1271,7 +1271,7 @@ setInterval(updateRwandaTime,1000);
 
 
     /* ========================================================
-       CHECK WHEN PAGE RETURNS
+       RETURNING TO PAGE
        ======================================================== */
 
     window.addEventListener(
