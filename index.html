@@ -11,7 +11,27 @@
 
     <title>Stock Management System</title>
 
-    <link rel="stylesheet" href="/style.css">
+    <!-- PWA -->
+    <link rel="manifest"
+          href="/static/pwa/manifest.json">
+
+    <meta name="theme-color"
+          content="#0f172a">
+
+    <meta name="mobile-web-app-capable"
+          content="yes">
+
+    <meta name="apple-mobile-web-app-capable"
+          content="yes">
+
+    <meta name="apple-mobile-web-app-status-bar-style"
+          content="default">
+
+    <meta name="apple-mobile-web-app-title"
+          content="Stock Manager">
+
+    <link rel="stylesheet"
+          href="/style.css">
 
 </head>
 
@@ -33,6 +53,40 @@
                 Welcome back
             </p>
 
+
+            <!-- PWA INSTALL -->
+
+            <div id="pwaInstallCard"
+                 style="display:none;">
+
+                <div class="pwa-install-icon">
+                    &#128230;
+                </div>
+
+                <div class="pwa-install-content">
+
+                    <strong>
+                        Install Stock Manager
+                    </strong>
+
+                    <span>
+                        Install the app for faster access.
+                    </span>
+
+                </div>
+
+                <button
+                    type="button"
+                    id="installStockAppBtn"
+                    class="pwa-install-button">
+
+                    INSTALL APP
+
+                </button>
+
+            </div>
+
+
             <form id="loginForm">
 
                 <label for="loginUsername">
@@ -46,6 +100,7 @@
                     autocomplete="username"
                     required
                 >
+
 
                 <label for="loginPassword">
                     Password
@@ -69,16 +124,24 @@
                         class="password-toggle"
                         id="toggleLoginPassword"
                         aria-label="Show password">
+
                         &#128065;
+
                     </button>
 
                 </div>
 
-                <button type="submit" class="main-button">
+
+                <button
+                    type="submit"
+                    class="main-button">
+
                     LOGIN
+
                 </button>
 
             </form>
+
 
             <p class="switch">
 
@@ -87,7 +150,9 @@
                 <button
                     type="button"
                     id="showRegister">
+
                     CREATE ACCOUNT
+
                 </button>
 
             </p>
@@ -109,6 +174,7 @@
                 Create your account
             </p>
 
+
             <form id="registerForm">
 
                 <label for="registerUsername">
@@ -123,6 +189,7 @@
                     required
                 >
 
+
                 <label for="registerPassword">
                     Password
                 </label>
@@ -134,6 +201,7 @@
                     autocomplete="new-password"
                     required
                 >
+
 
                 <label for="registerConfirm">
                     Confirm Password
@@ -147,11 +215,17 @@
                     required
                 >
 
-                <button type="submit" class="main-button">
+
+                <button
+                    type="submit"
+                    class="main-button">
+
                     REGISTER
+
                 </button>
 
             </form>
+
 
             <p class="switch">
 
@@ -160,7 +234,9 @@
                 <button
                     type="button"
                     id="showLogin">
+
                     BACK TO LOGIN
+
                 </button>
 
             </p>
@@ -169,7 +245,45 @@
 
     </div>
 
+
+    <!-- Main JavaScript -->
+
     <script src="/script.js"></script>
+
+
+    <!-- PWA SERVICE WORKER -->
+
+    <script>
+
+        if ("serviceWorker" in navigator) {
+
+            window.addEventListener("load", function () {
+
+                navigator.serviceWorker.register(
+                    "/service-worker.js"
+                )
+                .then(function (registration) {
+
+                    console.log(
+                        "Stock Manager service worker registered.",
+                        registration.scope
+                    );
+
+                })
+                .catch(function (error) {
+
+                    console.error(
+                        "Service worker registration failed:",
+                        error
+                    );
+
+                });
+
+            });
+
+        }
+
+    </script>
 
 </body>
 

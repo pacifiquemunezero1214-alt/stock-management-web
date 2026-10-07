@@ -194,3 +194,176 @@ if (loginPassword && toggleLoginPassword) {
 
     });
 }
+/* ============================================================
+   STOCK MANAGEMENT PWA INSTALL
+   ============================================================ */
+
+(function () {
+
+    let deferredInstallPrompt = null;
+
+    const installCard =
+        document.getElementById("pwaInstallCard");
+
+    const installButton =
+        document.getElementById("installStockAppBtn");
+
+
+    function isStandalone() {
+
+        return (
+            window.matchMedia(
+                "(display-mode: standalone)"
+            ).matches
+            ||
+            window.navigator.standalone === true
+        );
+
+    }
+
+
+    function hideInstallCard() {
+
+        if (installCard) {
+            installCard.style.display = "none";
+        }
+
+    }
+
+
+    function showInstallCard() {
+
+        if (
+            installCard &&
+            !isStandalone()
+        ) {
+
+            installCard.style.display = "flex";
+
+        }
+
+    }
+
+
+    /* Already installed */
+
+    if (isStandalone()) {
+
+        hideInstallCard();
+
+    }
+
+
+    /* Browser says the app can be installed */
+
+    window.addEventListener(
+        "beforeinstallprompt",
+        function (event) {
+
+            event.preventDefault();
+
+            deferredInstallPrompt = event;
+
+            showInstallCard();
+
+        }
+    );
+
+
+    /* Install button */
+
+    if (installButton) {
+
+        installButton.addEventListener(
+            "click",
+            async function () {
+
+                if (!deferredInstallPrompt) {
+
+                    return;
+
+                }
+
+
+                const promptEvent =
+                    deferredInstallPrompt;
+
+                deferredInstallPrompt = null;
+
+
+                try {
+
+                    await promptEvent.prompt();
+
+                    const result =
+                        await promptEvent.userChoice;
+
+
+                    if (
+                        result.outcome === "accepted"
+                    ) {
+
+                        hideInstallCard();
+
+                    } else {
+
+                        showInstallCard();
+
+                    }
+
+                } catch (error) {
+
+                    console.error(
+                        "PWA installation error:",
+                        error
+                    );
+
+                    showInstallCard();
+
+                }
+
+            }
+        );
+
+    }
+
+
+    /* App successfully installed */
+
+    window.addEventListener(
+        "appinstalled",
+        function () {
+
+            deferredInstallPrompt = null;
+
+            hideInstallCard();
+
+            console.log(
+                "Stock Management installed successfully."
+            );
+
+        }
+    );
+
+
+    /* Check again when page becomes visible */
+
+    window.addEventListener(
+        "pageshow",
+        function () {
+
+            if (isStandalone()) {
+
+                hideInstallCard();
+
+            } else if (deferredInstallPrompt) {
+
+                showInstallCard();
+
+            }
+
+        }
+    );
+
+
+})();

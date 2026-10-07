@@ -1,4 +1,4 @@
-﻿from flask import Flask, request, jsonify, session, redirect, render_template_string
+﻿from flask import Flask, request, jsonify, session, redirect, render_template_string, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -2191,7 +2191,13 @@ def create_default_admin(conn):
             ON CONFLICT(owner_id) DO NOTHING
         """, (admin_id,))
     conn.commit()
-
+@app.route("/service-worker.js")
+def service_worker():
+    return send_from_directory(
+        app.static_folder,
+        "pwa/service-worker.js",
+        mimetype="application/javascript"
+    )
 
 
 @app.route("/")
