@@ -5929,6 +5929,222 @@ def debts_page():
         return redirect("/admin-dashboard")
     return render_template_string(DEBT_HTML, css=BASE_CSS)
 
+@app.get("/welcome")
+def marketing_landing_page():
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="theme-color" content="#0f172a">
+        <title>Stock Manager | Manage Your Business Smarter</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #08111f;
+                color: #f8fafc;
+                line-height: 1.6;
+            }
+            nav {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 20px 7%;
+                border-bottom: 1px solid #263449;
+            }
+            .brand { font-size: 22px; font-weight: 800; }
+            .brand span { color: #38bdf8; }
+            .nav-link {
+                color: white;
+                text-decoration: none;
+                font-weight: bold;
+            }
+            .hero {
+                padding: 75px 7% 55px;
+                text-align: center;
+                max-width: 1000px;
+                margin: auto;
+            }
+            .tag {
+                color: #7dd3fc;
+                background: #102b43;
+                padding: 8px 14px;
+                border-radius: 30px;
+                font-size: 13px;
+            }
+            h1 {
+                font-size: clamp(36px, 6vw, 65px);
+                line-height: 1.1;
+                margin: 25px 0;
+            }
+            h1 span { color: #38bdf8; }
+            .intro {
+                color: #b8c5d6;
+                max-width: 680px;
+                margin: 0 auto 30px;
+                font-size: 18px;
+            }
+            .cta {
+                display: inline-block;
+                padding: 16px 32px;
+                background: #38bdf8;
+                color: #06111e;
+                text-decoration: none;
+                font-weight: 800;
+                border-radius: 12px;
+                margin: 8px;
+                box-shadow: 0 8px 30px #0284c755;
+            }
+            .secondary {
+                color: white;
+                border: 1px solid #475569;
+                padding: 15px 24px;
+                border-radius: 12px;
+                text-decoration: none;
+                display: inline-block;
+                margin: 8px;
+            }
+            .preview {
+                max-width: 900px;
+                margin: 20px auto 65px;
+                padding: 20px;
+                background: #111d2e;
+                border: 1px solid #34445b;
+                border-radius: 20px;
+                box-shadow: 0 25px 70px #0008;
+            }
+            .window { display: flex; gap: 7px; margin-bottom: 22px; }
+            .dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
+            .metrics {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 12px;
+            }
+            .metric {
+                padding: 20px 10px;
+                background: #1b2a40;
+                border-radius: 12px;
+                text-align: left;
+            }
+            .metric small { color: #a8b7cb; display: block; }
+            .metric strong { font-size: clamp(17px, 3vw, 27px); }
+            .section { padding: 40px 7% 75px; text-align: center; }
+            .features {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+                gap: 18px;
+                max-width: 1000px;
+                margin: 30px auto;
+                text-align: left;
+            }
+            .feature {
+                background: #111d2e;
+                border: 1px solid #263449;
+                border-radius: 16px;
+                padding: 24px;
+            }
+            .feature h3 { color: #7dd3fc; }
+            .feature p { color: #b8c5d6; }
+            footer {
+                padding: 25px;
+                text-align: center;
+                color: #94a3b8;
+                border-top: 1px solid #263449;
+            }
+            @media(max-width: 520px) {
+                nav { padding: 17px 5%; }
+                .hero { padding: 55px 5% 35px; }
+                .preview { margin: 15px 5% 45px; padding: 12px; }
+                .metric { padding: 14px 8px; }
+                .section { padding-left: 5%; padding-right: 5%; }
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <div class="brand">STOCK<span>MANAGER</span></div>
+            <a class="nav-link" href="/">LOGIN ↗</a>
+        </nav>
+
+        <main>
+            <section class="hero">
+                <span class="tag">SMART TOOLS FOR YOUR BUSINESS</span>
+                <h1>Take Control of Your Stock.<br><span>Grow Your Business.</span></h1>
+                <p class="intro">
+                    Track products, record sales, monitor profits, manage debts
+                    and organize your business from one convenient system.
+                </p>
+                <a class="cta" href="/">INSTALL NOW — GET STARTED ↗</a>
+                <br>
+                <a class="secondary" href="#features">Explore Features ↓</a>
+            </section>
+
+            <section class="preview" aria-label="Illustrative dashboard preview">
+                <div class="window">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                    <span style="margin-left:10px;color:#b8c5d6;font-size:13px">
+                        Stock Manager Dashboard Preview
+                    </span>
+                </div>
+                <div class="metrics">
+                    <div class="metric">
+                        <small>📦 Stock Control</small>
+                        <strong>Products</strong>
+                    </div>
+                    <div class="metric">
+                        <small>💰 Sales Tracking</small>
+                        <strong>Sales</strong>
+                    </div>
+                    <div class="metric">
+                        <small>📈 Business Insights</small>
+                        <strong>Profit</strong>
+                    </div>
+                </div>
+                <p style="color:#94a3b8;font-size:13px;text-align:center;margin:20px 0 0">
+                    Illustrative preview — sign in to access your system.
+                </p>
+            </section>
+
+            <section class="section" id="features">
+                <h2 style="font-size:32px">Everything You Need in One Place</h2>
+                <p style="color:#b8c5d6">
+                    Spend less time managing records and more time growing your business.
+                </p>
+                <div class="features">
+                    <article class="feature">
+                        <h3>📦 Stock Management</h3>
+                        <p>Organize products and monitor stock movements.</p>
+                    </article>
+                    <article class="feature">
+                        <h3>💵 Sales & Profit</h3>
+                        <p>Record sales and review business performance.</p>
+                    </article>
+                    <article class="feature">
+                        <h3>🧾 Debt Tracking</h3>
+                        <p>Keep customer debt records organized.</p>
+                    </article>
+                    <article class="feature">
+                        <h3>👥 Business Records</h3>
+                        <p>Manage important business information in one place.</p>
+                    </article>
+                </div>
+                <a class="cta" href="/">INSTALL NOW — START HERE ↗</a>
+            </section>
+        </main>
+
+        <footer>
+            Stock Manager · Smarter business management
+        </footer>
+    </body>
+    </html>
+    """)
+
+
+
+
 
 if __name__ == "__main__":
     init_database()
