@@ -965,7 +965,7 @@ async function submitSubscriptionPayment(){
 
 setInterval(loadDashboard,5000);
 
-```javascript
+
 async function loadNotifications(){
   try{
     const response = await fetch('/api/notifications', {
