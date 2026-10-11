@@ -965,91 +965,130 @@ async function submitSubscriptionPayment(){
 
 setInterval(loadDashboard,5000);
 
+```javascript
 async function loadNotifications(){
   try{
-    const response=await fetch('/api/notifications',{cache:'no-store'});
-    const d=await response.json();
+    const response = await fetch('/api/notifications', {
+      cache: 'no-store'
+    });
+    const d = await response.json();
 
     if(!d.success){
-      console.error('Notification error:',d);
+      console.error('Notification error:', d);
       return;
     }
 
-    const badge=document.getElementById('notificationBadge');
-    const list=document.getElementById('notificationList');
+    const badge = document.getElementById('notificationBadge');
+    const list = document.getElementById('notificationList');
 
-    if(d.unread_count>0){
-      badge.textContent=d.unread_count;
-      badge.style.display='flex';
+    if(!badge || !list) return;
+
+    const unreadCount = Number(d.unread_count) || 0;
+
+    if(unreadCount > 0){
+      badge.textContent = unreadCount;
+      badge.style.display = 'flex';
     }else{
-      badge.style.display='none';
+      badge.style.display = 'none';
     }
 
-    if(!d.notifications || d.notifications.length===0){
-      list.innerHTML='<div style="padding:20px;text-align:center;color:#777;">No active stock notifications</div>';
+    if(!d.notifications || d.notifications.length === 0){
+      list.innerHTML =
+        '<div style="padding:20px;text-align:center;color:#777;">No active stock notifications</div>';
       return;
     }
 
-    list.innerHTML=d.notifications.map(n=>`
-      <div style="
-        padding:14px;
-        border-bottom:1px solid #eee;
-        background:${n.is_read ? '#fff' : '#fff7f7'};
-        cursor:pointer;
-      " onclick="markNotificationRead(${n.id})">
-        <div style="font-weight:700;color:#d32f2f;">
-          &#9888; ${n.product_name}
+    const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[char]);
+
+    list.innerHTML = d.notifications.map(n => {
+      const id = Number(n.id);
+      const name = escapeHTML(n.product_name);
+      const quantity = escapeHTML(n.quantity);
+      const threshold = escapeHTML(n.threshold);
+      const isRead = Boolean(n.is_read);
+
+      return `
+        <div style="
+          padding:14px;
+          border-bottom:1px solid #eee;
+          background:${isRead ? '#fff' : '#fff7f7'};
+          cursor:pointer;
+        " onclick="markNotificationRead(${Number.isSafeInteger(id) && id > 0 ? id : 0})">
+          <div style="font-weight:700;color:#d32f2f;">
+            &#9888; ${name}
+          </div>
+          <div style="font-size:13px;margin-top:5px;color:#555;">
+            ${quantity} remaining - threshold ${threshold}
+          </div>
+          <div style="font-size:12px;margin-top:5px;color:#888;">
+            ${isRead ? 'Read' : 'Unread'}
+          </div>
         </div>
-        <div style="font-size:13px;margin-top:5px;color:#555;">
-          ${n.quantity} remaining Ã¢â‚¬â€ threshold ${n.threshold}
-        </div>
-        <div style="font-size:12px;margin-top:5px;color:#888;">
-          ${n.is_read ? 'Read' : 'Unread'}
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
   }catch(e){
-    console.error('Notification loading error:',e);
+    console.error('Notification loading error:', e);
   }
 }
 
 function toggleNotifications(){
-  const panel=document.getElementById('notificationPanel');
+  const panel = document.getElementById('notificationPanel');
+  if(!panel) return;
 
-  if(panel.style.display==='none' || panel.style.display===''){
-    panel.style.display='block';
+  if(panel.style.display === 'none' || panel.style.display === ''){
+    panel.style.display = 'block';
     loadNotifications();
   }else{
-    panel.style.display='none';
+    panel.style.display = 'none';
   }
 }
 
 async function markNotificationRead(id){
+  if(!Number.isSafeInteger(Number(id)) || Number(id) <= 0) return;
+
   try{
-    await fetch('/api/notifications/mark-read/'+id,{
-      method:'POST'
+    const response = await fetch('/api/notifications/mark-read/' + Number(id), {
+      method: 'POST'
     });
+
+    if(!response.ok){
+      console.error('Could not mark notification as read.');
+      return;
+    }
+
     loadNotifications();
   }catch(e){
-    console.error('Mark notification read error:',e);
+    console.error('Mark notification read error:', e);
   }
 }
 
 async function markAllNotificationsRead(){
   try{
-    await fetch('/api/notifications/mark-all-read',{
-      method:'POST'
+    const response = await fetch('/api/notifications/mark-all-read', {
+      method: 'POST'
     });
+
+    if(!response.ok){
+      console.error('Could not mark all notifications as read.');
+      return;
+    }
+
     loadNotifications();
   }catch(e){
-    console.error('Mark all notifications read error:',e);
+    console.error('Mark all notifications read error:', e);
   }
 }
 
 loadNotifications();
-setInterval(loadNotifications,5000);
-
+setInterval(loadNotifications, 5000);
+```
 </script><script>
 (function(){
 const greeting=document.getElementById('greetingText');
