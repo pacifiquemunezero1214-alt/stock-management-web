@@ -5943,6 +5943,15 @@ def marketing_landing_page():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta name="theme-color" content="#0f172a">
 <meta name="google-site-verification" content="aVcGm4YCAuoG18LqMBScQY4hHzBRMEaaUsf3WyCd-ng" />
+```
+    <meta name="description" content="Manage your business smarter with StockManager. Track inventory, sales, profits, cash flow, customer debts, and business records in one simple system.">
+    <link rel="canonical" href="https://stock-management-web-1s8j.onrender.com/welcome">
+    <meta property="og:title" content="Stock Manager | Manage Your Business Smarter">
+    <meta property="og:description" content="Track stock, sales, profits, cash flow, and customer debts with StockManager.">
+    <meta property="og:url" content="https://stock-management-web-1s8j.onrender.com/welcome">
+    <meta property="og:type" content="website">
+```
+
         <title>Stock Manager | Manage Your Business Smarter</title>
         <style>
             * { box-sizing: border-box; }
