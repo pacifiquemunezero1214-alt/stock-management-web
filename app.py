@@ -1,4 +1,4 @@
-﻿from flask import Flask, request, jsonify, session, redirect, render_template_string, send_from_directory
+from flask import Flask, request, jsonify, session, redirect, render_template_string, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -6141,6 +6141,33 @@ def marketing_landing_page():
     </body>
     </html>
     """)
+
+@app.get("/robots.txt")
+def robots_txt():
+    return Response(
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /dashboard\n"
+        "Disallow: /admin-dashboard\n"
+        "Disallow: /api/\n"
+        "Sitemap: https://stock-management-web-1s8j.onrender.com/sitemap.xml\n",
+        mimetype="text/plain"
+    )
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        '  <url>\n'
+        '    <loc>https://stock-management-web-1s8j.onrender.com/welcome</loc>\n'
+        '  </url>\n'
+        '</urlset>',
+        mimetype="application/xml"
+    )
+
+
 
 
 
