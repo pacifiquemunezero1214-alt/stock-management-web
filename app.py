@@ -5364,6 +5364,67 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
 
+# ============================================================
+# JOTFORM AI AGENT - LOGGED-IN HTML PAGES ONLY
+# ============================================================
+
+JOTFORM_AGENT_SCRIPT = (
+    '<script src="https://cdn.jotfor.ms/agent/embedjs/'
+    '019f79d17918700086493b0f4abd1717a658/embed.js"></script>'
+)
+
+
+@app.after_request
+def inject_jotform_agent(response):
+    # Do not inject the chatbot into logged-out pages.
+    if not logged_in():
+        return response
+
+    # Exclude authentication, logout, APIs and service worker.
+    if (
+        request.path in ("/", "/login", "/register", "/logout",
+                         "/service-worker.js")
+        or request.path.startswith("/api/")
+    ):
+        return response
+
+    # Only modify successful HTML page responses.
+    if response.status_code != 200:
+        return response
+
+    if response.mimetype != "text/html":
+        return response
+
+    if response.direct_passthrough:
+        return response
+
+    try:
+        html = response.get_data(as_text=True)
+
+        # Prevent duplicate chatbot scripts.
+        if "019f79d17918700086493b0f4abd1717a658/embed.js" in html:
+            return response
+
+        # Add the chatbot immediately before the closing body tag.
+        closing_tag = html.lower().rfind("</body>")
+
+        if closing_tag == -1:
+            return response
+
+        html = (
+            html[:closing_tag]
+            + JOTFORM_AGENT_SCRIPT
+            + html[closing_tag:]
+        )
+
+        response.set_data(html)
+
+    except Exception as error:
+        print("Jotform agent injection error:", error)
+
+    return response
+
+
 
 
 DEBT_HTML = '''
