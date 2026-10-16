@@ -1395,7 +1395,17 @@ async function attendanceUploadPending() {
 
     if (response.ok && data.success) {
       await attendanceDeletePending(record.key);
-      attendanceMessage('Attendance uploaded successfully.');
+      const capturedAt = record.savedAt
+  ? new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Kigali',
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    }).format(new Date(record.savedAt))
+  : 'Time unavailable';
+
+attendanceMessage(
+  `Attendance uploaded successfully. Photo taken at ${capturedAt} (Rwanda Time).`
+);
 
 const successEl = document.getElementById('attendanceUploadStatus');
 
