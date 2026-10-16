@@ -1395,8 +1395,48 @@ async function attendanceUploadPending() {
 
     if (response.ok && data.success) {
       await attendanceDeletePending(record.key);
-      attendanceMessage(`Attendance received by server at ${data.received_at}.`);
-      attendanceUploadMessage('CHECK-IN RECEIVED');
+      attendanceMessage('Attendance uploaded successfully.');
+
+const successEl = document.getElementById('attendanceUploadStatus');
+
+if (successEl) {
+  successEl.innerHTML = `
+    <div style="
+      display:flex;
+      align-items:center;
+      gap:14px;
+      background:#dcfce7;
+      color:#166534;
+      border:2px solid #22c55e;
+      border-radius:14px;
+      padding:16px;
+      margin-top:12px;
+      font-weight:700;
+      box-shadow:0 4px 12px rgba(22,163,74,0.12);
+    ">
+      <span style="
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        flex-shrink:0;
+        width:54px;
+        height:54px;
+        border-radius:50%;
+        background:#16a34a;
+        color:white;
+        font-size:38px;
+        font-weight:900;
+      ">✓</span>
+      <span style="font-size:17px;">
+        Your attendance uploaded successfully
+      </span>
+    </div>
+  `;
+
+  setTimeout(() => {
+    successEl.innerHTML = '';
+  }, 5000);
+}
       const button = document.getElementById('attendanceStartBtn');
       if (button) button.style.display = 'none';
       return;
