@@ -1105,9 +1105,19 @@ async function attendanceRefreshStatus() {
   const cameraArea = document.getElementById('attendanceCameraArea');
 
   try {
-    const response = await fetch('/api/attendance/status', {
-      cache: 'no-store'
-    });
+    const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+let response;
+
+try {
+  response = await fetch('/api/attendance/status', {
+    cache: 'no-store',
+    signal: controller.signal
+  });
+} finally {
+  clearTimeout(timeoutId);
+}
 
     if (!response.ok) throw new Error('Could not check attendance');
 
