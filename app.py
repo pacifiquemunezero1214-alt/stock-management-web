@@ -1343,6 +1343,7 @@ async function captureAttendancePhoto() {
       attendanceUploadMessage('GPS unavailable; uploading photo without coordinates.');
     }
 
+    attendanceBusy = false;
     await attendanceUploadPending();
   } catch (error) {
     console.error('Attendance capture error:', error);
