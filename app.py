@@ -754,31 +754,66 @@ DASHBOARD_HTML = """
     </button>
 </div></div></div>
 
-<div id="attendanceCard" class="section" style="margin:20px 0;padding:18px;border-radius:14px">
-  <h2 style="margin-top:0">Employee Attendance</h2>
-  <p id="attendanceMessage">Checking today's attendance...</p>
 
-  <div id="attendanceCameraArea" style="display:none">
+<div id="attendanceCard" class="section" style="margin:20px 0;padding:22px;border:1px solid #dbe4f0;border-radius:18px;background:linear-gradient(145deg,#ffffff,#f5f8ff);box-shadow:0 10px 28px rgba(15,23,42,.08);box-sizing:border-box;overflow:hidden;">
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+    <div style="width:50px;height:50px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:15px;background:#dbeafe;color:#1d4ed8;font-size:25px;">
+      📸
+    </div>
+    <div style="min-width:0;">
+      <h2 style="margin:0;color:#0f172a;font-size:21px;font-weight:850;letter-spacing:-.4px;">Employee Attendance</h2>
+      <p style="margin:5px 0 0;color:#64748b;font-size:13px;line-height:1.5;">Daily check-in and attendance verification</p>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#e2e8f0;margin:16px 0;"></div>
+
+  <div style="padding:14px 15px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;">
+    <p style="margin:0 0 5px;color:#1e40af;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;">Today's Status</p>
+    <p id="attendanceMessage" style="margin:0;color:#1e293b;font-size:14px;font-weight:650;line-height:1.65;">Checking today's attendance...</p>
+  </div>
+
+  <div id="attendanceCameraArea" style="display:none;margin-top:18px;padding:14px;border:1px solid #e2e8f0;border-radius:15px;background:#ffffff;">
+
+    <p style="margin:0 0 12px;color:#334155;font-size:13px;font-weight:700;">📷 Take your check-in photo</p>
+
     <video id="attendanceVideo" autoplay playsinline
-      style="width:100%;max-width:420px;border-radius:12px;background:#111"></video>
+      style="display:block;width:100%;max-width:420px;max-height:420px;margin:0 auto;border-radius:13px;background:#0f172a;object-fit:cover;"></video>
 
-    <canvas id="attendanceCanvas" style="display:none"></canvas>
+    <canvas id="attendanceCanvas" style="display:none;"></canvas>
 
-    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
       <button type="button" id="attendanceCaptureBtn"
-        onclick="captureAttendancePhoto()">Take Check-in Photo</button>
+        onclick="captureAttendancePhoto()"
+        style="flex:1;min-width:150px;border:0;border-radius:11px;padding:13px 16px;background:linear-gradient(135deg,#15803d,#16a34a);color:#ffffff;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 5px 12px rgba(22,163,74,.2);">
+        📸 Take Check-in Photo
+      </button>
+
       <button type="button" id="attendanceCancelBtn"
-        onclick="stopAttendanceCamera()">Cancel</button>
+        onclick="stopAttendanceCamera()"
+        style="border:1px solid #cbd5e1;border-radius:11px;padding:13px 18px;background:#f8fafc;color:#334155;font-size:14px;font-weight:750;cursor:pointer;">
+        Cancel
+      </button>
     </div>
   </div>
 
   <button type="button" id="attendanceStartBtn"
-    onclick="startAttendanceCamera()" style="display:none">
-    Start Check-in
+    onclick="startAttendanceCamera()"
+    style="display:none;width:100%;margin-top:16px;border:0;border-radius:12px;padding:15px 18px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#ffffff;font-size:15px;font-weight:850;letter-spacing:.2px;cursor:pointer;box-shadow:0 7px 16px rgba(37,99,235,.22);">
+    📍 Start Check-in
   </button>
 
-  <p id="attendanceUploadStatus" style="font-weight:600"></p>
+  <div style="display:flex;align-items:flex-start;gap:10px;margin-top:15px;padding:12px 13px;border-radius:11px;background:#fff7ed;border:1px solid #fed7aa;">
+    <span style="font-size:17px;">ℹ️</span>
+    <p style="margin:0;color:#9a3412;font-size:12px;line-height:1.65;">
+      Check in once per day. Allow camera and location access when requested. If the connection is unavailable, your saved photo can remain pending upload.
+    </p>
+  </div>
+
+  <p id="attendanceUploadStatus" style="margin:14px 0 0;padding:0;color:#334155;font-size:13px;font-weight:750;line-height:1.7;overflow-wrap:anywhere;"></p>
 </div>
+
 
 <div id="subscriptionPanel" style="margin:0 0 20px 0;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.18);">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
