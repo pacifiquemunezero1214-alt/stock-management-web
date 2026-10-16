@@ -753,6 +753,33 @@ DASHBOARD_HTML = """
         INSTALL APP
     </button>
 </div></div></div>
+
+<div id="attendanceCard" class="section" style="margin:20px 0;padding:18px;border-radius:14px">
+  <h2 style="margin-top:0">Employee Attendance</h2>
+  <p id="attendanceMessage">Checking today's attendance...</p>
+
+  <div id="attendanceCameraArea" style="display:none">
+    <video id="attendanceVideo" autoplay playsinline
+      style="width:100%;max-width:420px;border-radius:12px;background:#111"></video>
+
+    <canvas id="attendanceCanvas" style="display:none"></canvas>
+
+    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+      <button type="button" id="attendanceCaptureBtn"
+        onclick="captureAttendancePhoto()">Take Check-in Photo</button>
+      <button type="button" id="attendanceCancelBtn"
+        onclick="stopAttendanceCamera()">Cancel</button>
+    </div>
+  </div>
+
+  <button type="button" id="attendanceStartBtn"
+    onclick="startAttendanceCamera()" style="display:none">
+    Start Check-in
+  </button>
+
+  <p id="attendanceUploadStatus" style="font-weight:600"></p>
+</div>
+
 <div id="subscriptionPanel" style="margin:0 0 20px 0;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:white;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.18);">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
 <div>
@@ -956,6 +983,400 @@ async function submitSubscriptionPayment(){
 
     setTimeout(()=>{
       closePayNow();
+
+/* =========================================================
+   EMPLOYEE ATTENDANCE: CAMERA, GPS AND OFFLINE UPLOAD
+   ========================================================= */
+
+let attendanceStream = null;
+let attendanceBusy = false;
+let attendanceDBPromise = null;
+
+function attendanceTodayKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Kigali',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+
+  const values = {};
+  parts.forEach(part => values[part.type] = part.value);
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function attendanceMessage(text) {
+  const el = document.getElementById('attendanceMessage');
+  if (el) el.textContent = text;
+}
+
+function attendanceUploadMessage(text) {
+  const el = document.getElementById('attendanceUploadStatus');
+  if (el) el.textContent = text;
+}
+
+function attendanceOpenDB() {
+  if (attendanceDBPromise) return attendanceDBPromise;
+
+  attendanceDBPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open('StockManagerAttendance', 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('pending')) {
+        db.createObjectStore('pending', { keyPath: 'key' });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+  return attendanceDBPromise;
+}
+
+async function attendanceSavePending(record) {
+  const db = await attendanceOpenDB();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pending', 'readwrite');
+    tx.objectStore('pending').put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function attendanceGetPending() {
+  const db = await attendanceOpenDB();
+  const key = attendanceTodayKey();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pending', 'readonly');
+    const request = tx.objectStore('pending').get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function attendanceDeletePending(key) {
+  const db = await attendanceOpenDB();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pending', 'readwrite');
+    tx.objectStore('pending').delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function attendanceGetGPS() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) {
+      resolve({
+        latitude: null,
+        longitude: null,
+        accuracy: null
+      });
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      position => resolve({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy
+      }),
+      () => resolve({
+        latitude: null,
+        longitude: null,
+        accuracy: null
+      }),
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 0
+      }
+    );
+  });
+}
+
+async function attendanceRefreshStatus() {
+  const startButton = document.getElementById('attendanceStartBtn');
+  const cameraArea = document.getElementById('attendanceCameraArea');
+
+  try {
+    const response = await fetch('/api/attendance/status', {
+      cache: 'no-store'
+    });
+
+    if (!response.ok) throw new Error('Could not check attendance');
+
+    const data = await response.json();
+
+    if (data.checked_in) {
+      const pending = await attendanceGetPending().catch(() => null);
+
+      if (pending) {
+        await attendanceDeletePending(pending.key).catch(() => {});
+      }
+
+      if (startButton) startButton.style.display = 'none';
+      if (cameraArea) cameraArea.style.display = 'none';
+
+      attendanceMessage(
+        `Attendance received for today: ${data.received_at}.`
+      );
+      attendanceUploadMessage('CHECK-IN RECEIVED');
+      return true;
+    }
+
+    const pending = await attendanceGetPending().catch(() => null);
+
+    if (pending) {
+      attendanceMessage('You have a saved check-in photo waiting to upload.');
+      if (startButton) {
+        startButton.textContent = 'Retry Upload';
+        startButton.style.display = 'inline-block';
+      }
+    } else {
+      attendanceMessage('No check-in recorded for today. Take one photo when you arrive.');
+      if (startButton) {
+        startButton.textContent = 'Start Check-in';
+        startButton.style.display = 'inline-block';
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.warn('Attendance status unavailable:', error);
+
+    const pending = await attendanceGetPending().catch(() => null);
+
+    if (pending) {
+      attendanceMessage('Your check-in is saved on this device.');
+      attendanceUploadMessage('PENDING_UPLOAD — waiting for connection');
+      if (startButton) {
+        startButton.textContent = 'Retry Upload';
+        startButton.style.display = 'inline-block';
+      }
+    } else {
+      attendanceMessage('Cannot check attendance right now. Check your internet connection and reload.');
+      if (startButton) startButton.style.display = 'none';
+    }
+
+    return false;
+  }
+}
+
+async function attendanceStartOrRetry() {
+  const pending = await attendanceGetPending().catch(() => null);
+
+  if (pending) {
+    await attendanceUploadPending();
+    return;
+  }
+
+  await startAttendanceCamera();
+}
+
+async function startAttendanceCamera() {
+  if (attendanceBusy) return;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    attendanceMessage('Camera is unavailable. Open STOCKMANAGER using HTTPS in a supported browser.');
+    return;
+  }
+
+  try {
+    attendanceStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+
+    const video = document.getElementById('attendanceVideo');
+    video.srcObject = attendanceStream;
+
+    document.getElementById('attendanceCameraArea').style.display = 'block';
+    document.getElementById('attendanceStartBtn').style.display = 'none';
+
+    attendanceMessage('Position yourself and take your check-in photo.');
+    attendanceUploadMessage('');
+  } catch (error) {
+    console.error('Camera error:', error);
+    attendanceMessage('Camera permission was denied or the camera is unavailable.');
+  }
+}
+
+function stopAttendanceCamera() {
+  if (attendanceStream) {
+    attendanceStream.getTracks().forEach(track => track.stop());
+    attendanceStream = null;
+  }
+
+  const video = document.getElementById('attendanceVideo');
+  if (video) video.srcObject = null;
+
+  const area = document.getElementById('attendanceCameraArea');
+  if (area) area.style.display = 'none';
+
+  const button = document.getElementById('attendanceStartBtn');
+  if (button) button.style.display = 'inline-block';
+}
+
+async function captureAttendancePhoto() {
+  if (attendanceBusy) return;
+
+  attendanceBusy = true;
+
+  try {
+    const canvas = document.getElementById('attendanceCanvas');
+    const video = document.getElementById('attendanceVideo');
+
+    if (!video.videoWidth || !video.videoHeight) {
+      attendanceMessage('Camera is not ready. Please try again.');
+      return;
+    }
+
+    const maxWidth = 1280;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+
+    const context = canvas.getContext('2d');
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(resolve, 'image/jpeg', 0.82);
+    });
+
+    if (!blob || blob.size > 4 * 1024 * 1024) {
+      attendanceMessage('Could not prepare the photo. Please try again.');
+      return;
+    }
+
+    // Save the photo locally before attempting network upload.
+    const record = {
+      key: attendanceTodayKey(),
+      blob,
+      latitude: null,
+      longitude: null,
+      accuracy: null,
+      savedAt: new Date().toISOString()
+    };
+
+    await attendanceSavePending(record);
+
+    stopAttendanceCamera();
+    attendanceMessage('Photo saved. Requesting GPS for this check-in...');
+    attendanceUploadMessage('PENDING_UPLOAD');
+
+    // GPS is requested only after the employee takes the photo.
+    const gps = await attendanceGetGPS();
+
+    record.latitude = gps.latitude;
+    record.longitude = gps.longitude;
+    record.accuracy = gps.accuracy;
+
+    await attendanceSavePending(record);
+
+    if (gps.latitude === null || gps.longitude === null) {
+      attendanceUploadMessage('GPS unavailable; uploading photo without coordinates.');
+    }
+
+    await attendanceUploadPending();
+  } catch (error) {
+    console.error('Attendance capture error:', error);
+    attendanceMessage('Photo could not be saved. Please check browser storage and try again.');
+    attendanceUploadMessage('PENDING_UPLOAD — please retry');
+  } finally {
+    attendanceBusy = false;
+  }
+}
+
+async function attendanceUploadPending() {
+  if (attendanceBusy) return;
+
+  const record = await attendanceGetPending().catch(() => null);
+
+  if (!record) {
+    await attendanceRefreshStatus();
+    return;
+  }
+
+  if (!navigator.onLine) {
+    attendanceMessage('Your photo is saved on this device. Waiting for internet.');
+    attendanceUploadMessage('PENDING_UPLOAD');
+    return;
+  }
+
+  attendanceBusy = true;
+  attendanceUploadMessage('Uploading attendance photo...');
+
+  try {
+    const formData = new FormData();
+    formData.append('photo', record.blob, 'attendance.jpg');
+
+    if (record.latitude !== null && record.longitude !== null) {
+      formData.append('latitude', String(record.latitude));
+      formData.append('longitude', String(record.longitude));
+
+      if (record.accuracy !== null) {
+        formData.append('accuracy', String(record.accuracy));
+      }
+    }
+
+    const response = await fetch('/api/attendance/check-in', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      await attendanceDeletePending(record.key);
+      attendanceMessage(`Attendance received by server at ${data.received_at}.`);
+      attendanceUploadMessage('CHECK-IN RECEIVED');
+      const button = document.getElementById('attendanceStartBtn');
+      if (button) button.style.display = 'none';
+      return;
+    }
+
+    if (response.status === 409) {
+      await attendanceDeletePending(record.key);
+      await attendanceRefreshStatus();
+      return;
+    }
+
+    attendanceMessage(data.message || 'Upload failed. Your photo remains saved.');
+    attendanceUploadMessage('PENDING_UPLOAD — please retry');
+  } catch (error) {
+    console.warn('Attendance upload failed:', error);
+    attendanceMessage('Internet/server unavailable. Your photo remains saved on this device.');
+    attendanceUploadMessage('PENDING_UPLOAD');
+  } finally {
+    attendanceBusy = false;
+  }
+}
+
+// Retry on reconnection and whenever the dashboard is opened.
+window.addEventListener('online', () => {
+  attendanceUploadPending();
+});
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const button = document.getElementById('attendanceStartBtn');
+
+  if (button) {
+    button.onclick = attendanceStartOrRetry;
+  }
+
+  await attendanceRefreshStatus();
+
+  const pending = await attendanceGetPending().catch(() => null);
+  if (pending) attendanceUploadPending();
+});
+
       loadDashboard();
     },1800);
 
@@ -2226,6 +2647,29 @@ ADMIN_HTML = """
 </tbody>
 </table>
 </div>
+
+<div class="section" style="margin-top:25px">
+  <h2>Employee Attendance</h2>
+  <p>View employee check-ins, server receipt time, GPS status and photos.</p>
+
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="padding:10px;text-align:left">Employee</th>
+          <th style="padding:10px;text-align:left">Date</th>
+          <th style="padding:10px;text-align:left">Received At</th>
+          <th style="padding:10px;text-align:left">GPS</th>
+          <th style="padding:10px;text-align:left">Location</th>
+          <th style="padding:10px;text-align:left">Photo</th>
+        </tr>
+      </thead>
+      <tbody id="adminAttendanceRows">
+        <tr><td colspan="6" style="padding:10px">Loading attendance...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
 </div><div class="section" style="margin-top:25px"><h2> User Activity</h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>User</th><th>Action</th><th>Product</th><th>Qty</th><th>Amount</th><th>Profit</th><th>Description</th><th>Date</th></tr></thead><tbody id="activity"></tbody></table></div></div></div><script>async function toggleUser(id,activate){const action=activate?'activate':'deactivate';if(!confirm('Are you sure you want to '+action+' this account?'))return;try{const r=await fetch('/api/admin/users/'+id+'/'+action,{method:'POST'});const d=await r.json();alert(d.message||'Request completed.');if(d.success)load()}catch(e){console.error(e);alert('Request failed: '+e.message)}}window.deleteUser = async function deleteUser(id,username){
 if(!confirm("PERMANENT DELETE - Delete account: "+username+"? This will permanently remove the account and all data belonging to this user, including history. This cannot be undone."))return;
 try{
@@ -2333,6 +2777,80 @@ window.rejectSubscriptionPayment=async function(paymentId){
     alert("Unable to reject payment.");
   }
 };
+
+async function loadAdminAttendance() {
+  const tbody = document.getElementById('adminAttendanceRows');
+  if (!tbody) return;
+
+  try {
+    const response = await fetch('/api/admin/attendance', {
+      cache: 'no-store'
+    });
+
+    if (!response.ok) {
+      throw new Error('Could not load attendance');
+    }
+
+    const data = await response.json();
+    const records = data.attendance || [];
+
+    if (!records.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="6" style="padding:10px">No attendance records yet.</td></tr>';
+      return;
+    }
+
+    tbody.replaceChildren();
+
+    records.forEach(record => {
+      const tr = document.createElement('tr');
+
+      const values = [
+        record.username || '',
+        record.checkin_date || '',
+        record.received_at || '',
+        record.gps_status || 'UNAVAILABLE',
+        record.latitude != null && record.longitude != null
+          ? `${record.latitude}, ${record.longitude}`
+          : 'Unavailable'
+      ];
+
+      values.forEach(value => {
+        const td = document.createElement('td');
+        td.style.padding = '10px';
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+
+      const photoCell = document.createElement('td');
+      photoCell.style.padding = '10px';
+
+      const photoButton = document.createElement('button');
+      photoButton.type = 'button';
+      photoButton.textContent = 'View Photo';
+
+      photoButton.addEventListener('click', () => {
+        window.open(
+          `/api/admin/attendance/${encodeURIComponent(record.id)}/photo`,
+          '_blank',
+          'noopener'
+        );
+      });
+
+      photoCell.appendChild(photoButton);
+      tr.appendChild(photoCell);
+      tbody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Attendance loading error:', error);
+    tbody.innerHTML =
+      '<tr><td colspan="6" style="padding:10px">Could not load attendance. Refresh and try again.</td></tr>';
+  }
+}
+
+loadAdminAttendance();
+setInterval(loadAdminAttendance, 15000);
+
 
 loadSubscriptionPayments();
 setInterval(loadSubscriptionPayments,5000);
@@ -4975,6 +5493,234 @@ def heartbeat():
     finally:
         conn.close()
     return jsonify(success=True)
+
+# ============================================================
+# EMPLOYEE ATTENDANCE API
+# ============================================================
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import base64
+import binascii
+
+_attendance_schema_ready = False
+
+
+def ensure_attendance_schema():
+    global _attendance_schema_ready
+
+    if _attendance_schema_ready:
+        return
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS attendance_checkins (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    checkin_date DATE NOT NULL,
+                    photo BYTEA NOT NULL,
+                    photo_mime VARCHAR(50) NOT NULL DEFAULT 'image/jpeg',
+                    latitude DOUBLE PRECISION,
+                    longitude DOUBLE PRECISION,
+                    gps_accuracy DOUBLE PRECISION,
+                    gps_status VARCHAR(30) NOT NULL DEFAULT 'UNAVAILABLE',
+                    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (user_id, checkin_date)
+                )
+            """)
+        conn.commit()
+        _attendance_schema_ready = True
+    finally:
+        conn.close()
+
+
+@app.get("/api/attendance/status")
+@login_required
+def attendance_status():
+    if is_admin():
+        return jsonify(success=False, message="Employee account required"), 403
+
+    ensure_attendance_schema()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, checkin_date, received_at, gps_status
+                FROM attendance_checkins
+                WHERE user_id = %s
+                  AND checkin_date =
+                      (CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Kigali')::date
+                LIMIT 1
+            """, (current_user_id(),))
+            row = cur.fetchone()
+
+        if not row:
+            return jsonify(success=True, checked_in=False)
+
+        received = row["received_at"]
+        return jsonify(
+            success=True,
+            checked_in=True,
+            attendance_id=row["id"],
+            checkin_date=str(row["checkin_date"]),
+            received_at=received.strftime("%Y-%m-%d %H:%M:%S"),
+            gps_status=row["gps_status"]
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/attendance/check-in")
+@login_required
+def attendance_check_in():
+    if is_admin():
+        return jsonify(success=False, message="Employee account required"), 403
+
+    photo = request.files.get("photo")
+    if not photo:
+        return jsonify(success=False, message="Take a photo first"), 400
+
+    photo_bytes = photo.read(4 * 1024 * 1024 + 1)
+    if not photo_bytes or len(photo_bytes) > 4 * 1024 * 1024:
+        return jsonify(success=False, message="Photo must be under 4 MB"), 400
+
+    mime = (photo.mimetype or "").lower()
+    valid_photo = (
+        (mime == "image/jpeg" and photo_bytes.startswith(b"\xff\xd8\xff"))
+        or (
+            mime == "image/png"
+            and photo_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        )
+        or (
+            mime == "image/webp"
+            and photo_bytes.startswith(b"RIFF")
+            and photo_bytes[8:12] == b"WEBP"
+        )
+    )
+    if not valid_photo:
+        return jsonify(success=False, message="Unsupported or invalid image"), 400
+
+    def optional_float(value):
+        try:
+            if value is None or value == "":
+                return None
+            number = float(value)
+            if number != number or abs(number) == float("inf"):
+                return None
+            return number
+        except (TypeError, ValueError):
+            return None
+
+    latitude = optional_float(request.form.get("latitude"))
+    longitude = optional_float(request.form.get("longitude"))
+    accuracy = optional_float(request.form.get("accuracy"))
+
+    gps_status = "AVAILABLE" if (
+        latitude is not None and longitude is not None
+        and -90 <= latitude <= 90 and -180 <= longitude <= 180
+    ) else "UNAVAILABLE"
+
+    if gps_status == "UNAVAILABLE":
+        latitude = longitude = accuracy = None
+
+    ensure_attendance_schema()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO attendance_checkins
+                    (user_id, checkin_date, photo, photo_mime,
+                     latitude, longitude, gps_accuracy, gps_status)
+                VALUES (
+                    %s,
+                    (CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Kigali')::date,
+                    %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (user_id, checkin_date) DO NOTHING
+                RETURNING id, checkin_date, received_at, gps_status
+            """, (
+                current_user_id(), psycopg2.Binary(photo_bytes), mime,
+                latitude, longitude, accuracy, gps_status
+            ))
+            row = cur.fetchone()
+        conn.commit()
+
+        if not row:
+            return jsonify(
+                success=False,
+                message="Attendance already submitted for today"
+            ), 409
+
+        return jsonify(
+            success=True,
+            attendance_id=row["id"],
+            checkin_date=str(row["checkin_date"]),
+            received_at=row["received_at"].strftime("%Y-%m-%d %H:%M:%S"),
+            gps_status=row["gps_status"]
+        ), 201
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/attendance")
+@admin_required
+def admin_attendance_list():
+    ensure_attendance_schema()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.id, a.user_id, u.username, a.checkin_date,
+                       a.received_at, a.latitude, a.longitude,
+                       a.gps_accuracy, a.gps_status
+                FROM attendance_checkins a
+                JOIN users u ON u.id = a.user_id
+                WHERE u.role != 'admin'
+                ORDER BY a.received_at DESC
+                LIMIT 500
+            """)
+            rows = cur.fetchall()
+
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["checkin_date"] = str(item["checkin_date"])
+            item["received_at"] = item["received_at"].strftime("%Y-%m-%d %H:%M:%S")
+            results.append(item)
+
+        return jsonify(success=True, attendance=results)
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/attendance/<int:attendance_id>/photo")
+@admin_required
+def admin_attendance_photo(attendance_id):
+    ensure_attendance_schema()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.photo, a.photo_mime
+                FROM attendance_checkins a
+                JOIN users u ON u.id = a.user_id
+                WHERE a.id = %s AND u.role != 'admin'
+            """, (attendance_id,))
+            row = cur.fetchone()
+
+        if not row:
+            return jsonify(success=False, message="Photo not found"), 404
+
+        response = Response(bytes(row["photo"]), mimetype=row["photo_mime"])
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+    finally:
+        conn.close()
+
 
 
 @app.get("/admin-dashboard")
