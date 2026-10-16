@@ -984,6 +984,20 @@ async function submitSubscriptionPayment(){
     setTimeout(()=>{
       closePayNow();
 
+
+      loadDashboard();
+    },1800);
+
+  }catch(error){
+    console.error("Subscription payment error:",error);
+    messageEl.style.background="#fef2f2";
+    messageEl.style.color="#b91c1c";
+    messageEl.textContent="Unable to submit payment right now.";
+  }
+}
+
+setInterval(loadDashboard,5000);
+
 /* =========================================================
    EMPLOYEE ATTENDANCE: CAMERA, GPS AND OFFLINE UPLOAD
    ========================================================= */
@@ -1394,18 +1408,7 @@ if (document.readyState === 'loading') {
 } else {
   attendanceInitialize();
 }
-      loadDashboard();
-    },1800);
 
-  }catch(error){
-    console.error("Subscription payment error:",error);
-    messageEl.style.background="#fef2f2";
-    messageEl.style.color="#b91c1c";
-    messageEl.textContent="Unable to submit payment right now.";
-  }
-}
-
-setInterval(loadDashboard,5000);
 
 async function loadNotifications(){
   try{
