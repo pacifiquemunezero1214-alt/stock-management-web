@@ -1376,6 +1376,7 @@ async function attendanceUploadPending() {
   try {
     const formData = new FormData();
     formData.append('photo', record.blob, 'attendance.jpg');
+formData.append('photo_taken_at', record.savedAt || '');
 
     if (record.latitude !== null && record.longitude !== null) {
       formData.append('latitude', String(record.latitude));
@@ -5633,10 +5634,19 @@ def ensure_attendance_schema():
                     longitude DOUBLE PRECISION,
                     gps_accuracy DOUBLE PRECISION,
                     gps_status VARCHAR(30) NOT NULL DEFAULT 'UNAVAILABLE',
+                   
                     received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    photo_taken_at TIMESTAMP,
                     UNIQUE (user_id, checkin_date)
+
                 )
             """)
+
+            cur.execute("""
+                ALTER TABLE attendance_checkins
+                ADD COLUMN IF NOT EXISTS photo_taken_at TIMESTAMP
+            """)
+
         conn.commit()
         _attendance_schema_ready = True
     finally:
@@ -5654,8 +5664,8 @@ def attendance_status():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, checkin_date, received_at, gps_status
-                FROM attendance_checkins
+               SELECT id, checkin_date, received_at, photo_taken_at, gps_status
+FROM attendance_checkins
                 WHERE user_id = %s
                   AND checkin_date =
                       (CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Kigali')::date
@@ -5663,18 +5673,26 @@ def attendance_status():
             """, (current_user_id(),))
             row = cur.fetchone()
 
+        
         if not row:
             return jsonify(success=True, checked_in=False)
 
         received = row["received_at"]
+        photo_taken = row["photo_taken_at"]
+
         return jsonify(
             success=True,
             checked_in=True,
             attendance_id=row["id"],
             checkin_date=str(row["checkin_date"]),
             received_at=received.strftime("%Y-%m-%d %H:%M:%S"),
+            photo_taken_at=(
+                photo_taken.strftime("%Y-%m-%d %H:%M:%S")
+                if photo_taken else None
+            ),
             gps_status=row["gps_status"]
         )
+
     finally:
         conn.close()
 
