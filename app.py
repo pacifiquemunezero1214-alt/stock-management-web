@@ -1374,7 +1374,7 @@ window.addEventListener('online', () => {
   attendanceUploadPending();
 });
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function attendanceInitialize() {
   const button = document.getElementById('attendanceStartBtn');
 
   if (button) {
@@ -1385,8 +1385,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const pending = await attendanceGetPending().catch(() => null);
   if (pending) attendanceUploadPending();
-});
+}
 
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', attendanceInitialize, {
+    once: true
+  });
+} else {
+  attendanceInitialize();
+}
       loadDashboard();
     },1800);
 
