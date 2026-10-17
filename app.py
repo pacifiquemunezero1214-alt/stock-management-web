@@ -3520,92 +3520,96 @@ def ai_chat_api():
         + question
     )
 
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
 
-    providers = []
-    if openai_key:
-        providers.append((
-            "https://api.openai.com/v1/chat/completions",
-            openai_key,
-            "gpt-5-mini",
-        ))
-    if groq_key:
-        providers.append((
-            "https://api.groq.com/openai/v1/chat/completions",
-            groq_key,
-            "llama-3.3-70b-versatile",
-        ))
-
-    if not providers:
+    if not gemini_key:
         return jsonify(
             success=False,
             message="AI is not configured yet. Please contact the administrator."
         ), 503
 
-    for endpoint, api_key, model in providers:
-        body = json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 700,
-        }).encode("utf-8")
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        "models/gemini-3.8-flash:generateContent"
+    )
 
-        req = urllib.request.Request(
-            endpoint,
-            data=body,
-            headers={
-                "Authorization": "Bearer " + api_key,
-                "Content-Type": "application/json",
-            },
-            method="POST",
+    body = json.dumps({
+        "systemInstruction": {
+            "parts": [{"text": system_message}]
+        },
+        "contents": [
+            {"parts": [{"text": user_message}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 700
+        }
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "x-goog-api-key": gemini_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+
+        candidates = result.get("candidates", [])
+        parts = (
+            candidates[0].get("content", {}).get("parts", [])
+            if candidates else []
         )
 
+        answer = "\n".join(
+            part.get("text", "")
+            for part in parts
+            if part.get("text")
+        ).strip()
+
+        if answer:
+            return jsonify(success=True, answer=answer)
+
+        app.logger.warning("Gemini returned no text in its response")
+
+    except urllib.error.HTTPError as exc:
         try:
-            with urllib.request.urlopen(req, timeout=25) as response:
-                result = json.loads(response.read().decode("utf-8"))
-
-            answer = result["choices"][0]["message"]["content"].strip()
-            if answer:
-                return jsonify(success=True, answer=answer)
-
-
-        except urllib.error.HTTPError as exc:
-            try:
-                error_data = json.loads(
-                    exc.read().decode("utf-8", errors="replace")
-                )
-                error_message = error_data.get("error", {}).get(
-                    "message", "No provider error details"
-                )
-            except Exception:
-                error_message = "Could not read provider error details"
-
-            app.logger.warning(
-                "AI provider HTTP error: status=%s, model=%s, message=%s",
-                exc.code, model, str(error_message)[:500]
+            error_data = json.loads(
+                exc.read().decode("utf-8", errors="replace")
             )
-            continue
-
-        except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
-            app.logger.warning(
-                "AI provider request failed: model=%s, error_type=%s, details=%s",
-                model, type(exc).__name__, str(exc)[:300]
+            error_message = error_data.get("error", {}).get(
+                "message", "No provider error details"
             )
-            continue
-
         except Exception:
-            app.logger.exception("Unexpected AI chat provider failure")
-            continue
+            error_message = "Could not read provider error details"
 
+        app.logger.warning(
+            "Gemini HTTP error: status=%s, message=%s",
+            exc.code, str(error_message)[:500]
+        )
+
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
+        app.logger.warning(
+            "Gemini request failed: error_type=%s, details=%s",
+            type(exc).__name__, str(exc)[:300]
+        )
+
+    except Exception:
+        app.logger.exception("Unexpected Gemini chat provider failure")
 
     return jsonify(
         success=False,
         message="The AI service is temporarily unavailable. Please try again."
     ), 503
+
+
+
+
 
 
 
@@ -5941,7 +5945,7 @@ def ensure_attendance_schema():
                     longitude DOUBLE PRECISION,
                     gps_accuracy DOUBLE PRECISION,
                     gps_status VARCHAR(30) NOT NULL DEFAULT 'UNAVAILABLE',
-                   
+
                     received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     photo_taken_at TIMESTAMP,
                     UNIQUE (user_id, checkin_date)
@@ -5980,7 +5984,7 @@ FROM attendance_checkins
             """, (current_user_id(),))
             row = cur.fetchone()
 
-        
+
         if not row:
             return jsonify(success=True, checked_in=False)
 
