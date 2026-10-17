@@ -266,6 +266,41 @@ def init_database():
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # STOCKMANAGER AI CHAT HISTORY
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_conversations (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    title VARCHAR(200) NOT NULL DEFAULT 'New Chat',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INTEGER NOT NULL
+                        REFERENCES ai_chat_conversations(id) ON DELETE CASCADE,
+                    user_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    role VARCHAR(20) NOT NULL
+                        CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_chat_conversations_user
+                ON ai_chat_conversations(user_id, updated_at DESC)
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_conversation
+                ON ai_chat_messages(conversation_id, user_id, id)
+            """)
 
         conn.commit()
         create_default_admin(conn)
@@ -1856,98 +1891,607 @@ setInterval(updateRwandaTime,1000);
 </script>
 
 
+
 <!-- STOCKMANAGER AI CHAT WIDGET -->
 <style>
-#stockmanager-ai-widget{position:fixed;right:20px;bottom:20px;z-index:99999;font-family:Arial,sans-serif}
-#stockmanager-ai-toggle{border:0;border-radius:28px;padding:14px 19px;background:#0f172a;color:#fff;font-weight:bold;cursor:pointer;box-shadow:0 4px 18px #0003}
-#stockmanager-ai-panel{display:none;position:absolute;right:0;bottom:62px;width:min(360px,calc(100vw - 32px));height:440px;max-height:70vh;background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 8px 30px #0003;overflow:hidden}
-#stockmanager-ai-header{background:#0f172a;color:#fff;padding:14px;font-weight:bold;display:flex;justify-content:space-between;align-items:center}
-#stockmanager-ai-close{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}
-#stockmanager-ai-messages{height:calc(100% - 125px);overflow-y:auto;padding:12px;background:#f8fafc}
-.stockmanager-ai-message{white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px;margin:8px 0;border-radius:12px;max-width:90%;font-size:14px;line-height:1.45}
-.stockmanager-ai-user{margin-left:auto;background:#dbeafe}
-.stockmanager-ai-bot{margin-right:auto;background:#fff;border:1px solid #e5e7eb}
-#stockmanager-ai-form{display:flex;gap:7px;padding:10px;border-top:1px solid #e5e7eb}
-#stockmanager-ai-input{min-width:0;flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:9px;font-size:14px}
-#stockmanager-ai-send{border:0;border-radius:9px;padding:0 13px;background:#2563eb;color:#fff;font-weight:bold;cursor:pointer}
-#stockmanager-ai-send:disabled{opacity:.6;cursor:wait}
+#stockmanager-ai-widget {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 99999;
+  font-family: Arial, sans-serif;
+}
+
+#stockmanager-ai-toggle {
+  border: 0;
+  border-radius: 28px;
+  padding: 14px 19px;
+  background: #0f172a;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 4px 18px #0003;
+}
+
+#stockmanager-ai-panel {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 62px;
+  width: min(390px, calc(100vw - 24px));
+  height: 540px;
+  max-height: calc(100vh - 100px);
+  background: white;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px #0003;
+  overflow: hidden;
+}
+
+#stockmanager-ai-header {
+  height: 54px;
+  box-sizing: border-box;
+  background: #0f172a;
+  color: white;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#stockmanager-ai-menu,
+#stockmanager-ai-close {
+  border: 0;
+  background: transparent;
+  color: white;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px 7px;
+}
+
+#stockmanager-ai-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+#stockmanager-ai-heading strong {
+  display: block;
+  font-size: 14px;
+}
+
+#stockmanager-ai-username {
+  display: block;
+  margin-top: 3px;
+  color: #cbd5e1;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+#stockmanager-ai-body {
+  position: relative;
+  height: calc(100% - 54px);
+}
+
+#stockmanager-ai-messages {
+  height: calc(100% - 61px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.stockmanager-ai-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  margin: 8px 0;
+  border-radius: 12px;
+  max-width: 90%;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.stockmanager-ai-user {
+  margin-left: auto;
+  background: #dbeafe;
+}
+
+.stockmanager-ai-bot {
+  margin-right: auto;
+  background: white;
+  border: 1px solid #e5e7eb;
+}
+
+#stockmanager-ai-form {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 61px;
+  box-sizing: border-box;
+  display: flex;
+  gap: 7px;
+  padding: 10px;
+  border-top: 1px solid #e5e7eb;
+  background: white;
+}
+
+#stockmanager-ai-input {
+  min-width: 0;
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  font-size: 14px;
+}
+
+#stockmanager-ai-send {
+  border: 0;
+  border-radius: 9px;
+  padding: 0 13px;
+  background: #2563eb;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#stockmanager-ai-send:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+#stockmanager-ai-sidebar {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  background: white;
+  overflow-y: auto;
+  padding: 13px;
+}
+
+#stockmanager-ai-sidebar.ai-open {
+  display: block;
+}
+
+#stockmanager-ai-new {
+  width: 100%;
+  padding: 11px;
+  margin-bottom: 12px;
+  border: 0;
+  border-radius: 9px;
+  background: #2563eb;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#stockmanager-ai-new:disabled {
+  opacity: .6;
+}
+
+#stockmanager-ai-history-title {
+  font-size: 12px;
+  color: #64748b;
+  margin: 8px 0;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.stockmanager-ai-history-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  border-radius: 9px;
+  padding: 10px;
+  margin: 6px 0;
+  color: #111827;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.stockmanager-ai-history-item.ai-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+#stockmanager-ai-history-empty {
+  color: #64748b;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+#stockmanager-ai-sidebar-close {
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  float: right;
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.stockmanager-ai-menu-section {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.stockmanager-ai-menu-section strong {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+}
+
+.stockmanager-ai-menu-section p {
+  margin: 5px 0;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  #stockmanager-ai-widget {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  #stockmanager-ai-panel {
+    position: fixed;
+    right: 10px;
+    bottom: 72px;
+    width: calc(100vw - 20px);
+    height: min(570px, calc(100vh - 95px));
+    max-height: calc(100vh - 95px);
+  }
+}
 </style>
+
 <div id="stockmanager-ai-widget">
   <div id="stockmanager-ai-panel">
-    <div id="stockmanager-ai-header">
-      <span>STOCKMANAGER AI</span>
-      <button id="stockmanager-ai-close" type="button" aria-label="Close chatbot">&times;</button>
-    </div>
-    <div id="stockmanager-ai-messages">
-      <div class="stockmanager-ai-message stockmanager-ai-bot">Muraho! Ask me about your stock, sales totals, cash balance, debts, or nursing education.</div>
-    </div>
-    <form id="stockmanager-ai-form">
-      <input id="stockmanager-ai-input" type="text" maxlength="2000" placeholder="Andika ikibazo..." autocomplete="off" required>
-      <button id="stockmanager-ai-send" type="submit">Send</button>
-    </form>
-  </div>
-  <button id="stockmanager-ai-toggle" type="button">Ask STOCKMANAGER AI</button>
-</div>
-<script>
-(function(){
-  const panel=document.getElementById("stockmanager-ai-panel");
-  const toggle=document.getElementById("stockmanager-ai-toggle");
-  const close=document.getElementById("stockmanager-ai-close");
-  const messages=document.getElementById("stockmanager-ai-messages");
-  const form=document.getElementById("stockmanager-ai-form");
-  const input=document.getElementById("stockmanager-ai-input");
-  const send=document.getElementById("stockmanager-ai-send");
 
-  function addMessage(text,who){
-    const el=document.createElement("div");
-    el.className="stockmanager-ai-message "+(who==="user"?"stockmanager-ai-user":"stockmanager-ai-bot");
-    el.textContent=text;
+    <div id="stockmanager-ai-header">
+      <button id="stockmanager-ai-menu" type="button"
+              aria-label="Open menu">☰</button>
+
+      <div id="stockmanager-ai-heading">
+        <strong>STOCKMANAGER AI</strong>
+        <span id="stockmanager-ai-username">Loading account...</span>
+      </div>
+
+      <button id="stockmanager-ai-close" type="button"
+              aria-label="Close chatbot">×</button>
+    </div>
+
+    <div id="stockmanager-ai-body">
+
+      <div id="stockmanager-ai-messages">
+        <div class="stockmanager-ai-message stockmanager-ai-bot">
+Muraho! Welcome to STOCKMANAGER AI.
+
+Ask about your products, current stock, sales, profit, cash balance, debts, or nursing education.
+
+Use the menu to start a new chat or reopen an earlier conversation.
+        </div>
+      </div>
+
+      <form id="stockmanager-ai-form">
+        <input id="stockmanager-ai-input"
+               type="text"
+               maxlength="2000"
+               placeholder="Andika ikibazo..."
+               autocomplete="off"
+               required>
+
+        <button id="stockmanager-ai-send" type="submit">Send</button>
+      </form>
+
+      <div id="stockmanager-ai-sidebar">
+
+        <button id="stockmanager-ai-sidebar-close"
+                type="button"
+                aria-label="Close menu">×</button>
+
+        <div style="font-weight:bold;font-size:17px;margin:8px 0 14px;">
+          STOCKMANAGER AI MENU
+        </div>
+
+        <button id="stockmanager-ai-new" type="button">
+          ＋ New Chat
+        </button>
+
+        <div class="stockmanager-ai-menu-section">
+          <strong>📦 Business Assistant</strong>
+          <p>Products and current stock</p>
+          <p>Stock in and stock out</p>
+          <p>Sales and potential profit</p>
+          <p>Cash balance and debts</p>
+          <p>Low-stock information</p>
+        </div>
+
+        <div class="stockmanager-ai-menu-section">
+          <strong>🩺 Nursing AI</strong>
+          <p>Ask nursing, patient care, wound care,
+             microbiology, and other educational questions.</p>
+        </div>
+
+        <div id="stockmanager-ai-history-title">
+          🕘 Previous Conversations
+        </div>
+
+        <div id="stockmanager-ai-history-empty">
+          Loading conversations...
+        </div>
+
+        <div id="stockmanager-ai-history-list"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <button id="stockmanager-ai-toggle" type="button">
+    ✦ Ask STOCKMANAGER AI
+  </button>
+</div>
+
+<script>
+(function () {
+  const panel = document.getElementById("stockmanager-ai-panel");
+  const toggle = document.getElementById("stockmanager-ai-toggle");
+  const close = document.getElementById("stockmanager-ai-close");
+  const menu = document.getElementById("stockmanager-ai-menu");
+  const sidebar = document.getElementById("stockmanager-ai-sidebar");
+  const sidebarClose = document.getElementById("stockmanager-ai-sidebar-close");
+  const newChat = document.getElementById("stockmanager-ai-new");
+  const historyList = document.getElementById("stockmanager-ai-history-list");
+  const historyEmpty = document.getElementById("stockmanager-ai-history-empty");
+  const username = document.getElementById("stockmanager-ai-username");
+  const messages = document.getElementById("stockmanager-ai-messages");
+  const form = document.getElementById("stockmanager-ai-form");
+  const input = document.getElementById("stockmanager-ai-input");
+  const send = document.getElementById("stockmanager-ai-send");
+
+  let activeConversationId = null;
+  let sending = false;
+
+  function addMessage(text, role) {
+    const el = document.createElement("div");
+    el.className = "stockmanager-ai-message " +
+      (role === "user" ? "stockmanager-ai-user" : "stockmanager-ai-bot");
+    el.textContent = text;
     messages.appendChild(el);
-    messages.scrollTop=messages.scrollHeight;
+    messages.scrollTop = messages.scrollHeight;
     return el;
   }
 
-  toggle.addEventListener("click",function(){
-    panel.style.display="block";
-    toggle.style.display="none";
+  function clearMessages() {
+    messages.replaceChildren();
+  }
+
+  function showWelcome() {
+    clearMessages();
+    addMessage(
+      "Muraho! Ask about your stock, sales, cash balance, debts, or nursing education.",
+      "assistant"
+    );
+  }
+
+  function openSidebar() {
+    sidebar.classList.add("ai-open");
+    loadHistory();
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove("ai-open");
+  }
+
+  async function loadUsername() {
+    try {
+      const response = await fetch("/api/ai-chat/me");
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        username.textContent = "Signed in: " + (data.username || "User");
+      } else {
+        username.textContent = "Your account";
+      }
+    } catch (error) {
+      username.textContent = "Your account";
+    }
+  }
+
+  async function loadHistory() {
+    historyList.replaceChildren();
+    historyEmpty.textContent = "Loading conversations...";
+    historyEmpty.style.display = "block";
+
+    try {
+      const response = await fetch("/api/ai-chat/conversations");
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error("Could not load history");
+      }
+
+      const conversations = data.conversations || [];
+      historyList.replaceChildren();
+
+      if (!conversations.length) {
+        historyEmpty.textContent = "No saved chats yet. Start a New Chat.";
+        historyEmpty.style.display = "block";
+        return;
+      }
+
+      historyEmpty.style.display = "none";
+
+      conversations.forEach(function (conversation) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "stockmanager-ai-history-item" +
+          (String(conversation.id) === String(activeConversationId)
+            ? " ai-active" : "");
+        button.textContent = conversation.title || "New Chat";
+
+        button.addEventListener("click", function () {
+          openConversation(conversation.id);
+        });
+
+        historyList.appendChild(button);
+      });
+    } catch (error) {
+      historyEmpty.textContent = "Could not load history. Please try again.";
+      historyEmpty.style.display = "block";
+    }
+  }
+
+  async function createConversation() {
+    if (sending) return;
+
+    newChat.disabled = true;
+
+    try {
+      const response = await fetch("/api/ai-chat/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.conversation) {
+        throw new Error(data.message || "Could not create chat");
+      }
+
+      activeConversationId = data.conversation.id;
+      showWelcome();
+      closeSidebar();
+      await loadHistory();
+      input.focus();
+    } catch (error) {
+      historyEmpty.textContent =
+        error.message || "Could not create a new chat.";
+      historyEmpty.style.display = "block";
+    } finally {
+      newChat.disabled = false;
+    }
+  }
+
+  async function openConversation(conversationId) {
+    historyEmpty.textContent = "Opening conversation...";
+    historyEmpty.style.display = "block";
+
+    try {
+      const response = await fetch(
+        "/api/ai-chat/conversations/" + encodeURIComponent(conversationId)
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Could not open conversation");
+      }
+
+      activeConversationId = data.conversation.id;
+      clearMessages();
+
+      const savedMessages = data.messages || [];
+
+      if (!savedMessages.length) {
+        addMessage(
+          "This is a new conversation. Ask your first question.",
+          "assistant"
+        );
+      } else {
+        savedMessages.forEach(function (item) {
+          addMessage(item.content, item.role);
+        });
+      }
+
+      closeSidebar();
+      await loadHistory();
+      messages.scrollTop = messages.scrollHeight;
+      input.focus();
+    } catch (error) {
+      historyEmpty.textContent =
+        error.message || "Could not open conversation.";
+      historyEmpty.style.display = "block";
+    }
+  }
+
+  toggle.addEventListener("click", function () {
+    panel.style.display = "block";
+    toggle.style.display = "none";
+    loadUsername();
     input.focus();
   });
-  close.addEventListener("click",function(){
-    panel.style.display="none";
-    toggle.style.display="inline-block";
+
+  close.addEventListener("click", function () {
+    panel.style.display = "none";
+    toggle.style.display = "inline-block";
+    closeSidebar();
   });
 
-  form.addEventListener("submit",async function(event){
+  menu.addEventListener("click", openSidebar);
+  sidebarClose.addEventListener("click", closeSidebar);
+  newChat.addEventListener("click", createConversation);
+
+  form.addEventListener("submit", async function (event) {
     event.preventDefault();
-    const question=input.value.trim();
-    if(!question || send.disabled) return;
 
-    addMessage(question,"user");
-    input.value="";
-    send.disabled=true;
-    const waiting=addMessage("Thinking...","bot");
+    const question = input.value.trim();
+    if (!question || sending) return;
 
-    try{
-      const response=await fetch("/api/ai-chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:question})
+    sending = true;
+    send.disabled = true;
+    addMessage(question, "user");
+    input.value = "";
+
+    const waiting = addMessage("Thinking...", "assistant");
+
+    try {
+      const response = await fetch("/api/ai-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: question,
+          conversation_id: activeConversationId
+        })
       });
-      const data=await response.json();
-      waiting.textContent=response.ok && data.success
-        ? data.answer
-        : (data.message || "AI is temporarily unavailable. Please try again.");
-    }catch(error){
-      waiting.textContent="Connection problem. Please check your internet and try again.";
-    }finally{
-      send.disabled=false;
+
+      const data = await response.json();
+
+      if (data.conversation_id) {
+        activeConversationId = data.conversation_id;
+      }
+
+      if (response.ok && data.success) {
+        waiting.textContent = data.answer;
+      } else {
+        waiting.textContent = data.message ||
+          "The AI service is temporarily unavailable. Please try again.";
+      }
+
+      await loadHistory();
+    } catch (error) {
+      waiting.textContent =
+        "Connection problem. Please check your internet and try again.";
+    } finally {
+      sending = false;
+      send.disabled = false;
       input.focus();
-      messages.scrollTop=messages.scrollHeight;
+      messages.scrollTop = messages.scrollHeight;
     }
   });
+
+  loadUsername();
 })();
 </script>
 <!-- END STOCKMANAGER AI CHAT WIDGET -->
+
 
 </body></html>
 """
@@ -3425,16 +3969,17 @@ def submit_subscription_payment():
 # STOCKMANAGER AI CHAT API
 # ============================================================
 
+
 @app.post("/api/ai-chat")
 @login_required
 def ai_chat_api():
     uid = current_user_id()
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("message", "")).strip()
+    conversation_id = payload.get("conversation_id")
 
     if not question:
         return jsonify(success=False, message="Please enter a question."), 400
-
     if len(question) > 2000:
         return jsonify(success=False, message="Your question is too long."), 400
 
@@ -3442,11 +3987,50 @@ def ai_chat_api():
     import urllib.request
     import urllib.error
 
-    context = {}
-
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            if conversation_id is not None:
+                try:
+                    conversation_id = int(conversation_id)
+                except (TypeError, ValueError):
+                    return jsonify(success=False, message="Invalid conversation."), 400
+
+                cur.execute("""
+                    SELECT id, title
+                    FROM ai_chat_conversations
+                    WHERE id=%s AND user_id=%s
+                """, (conversation_id, uid))
+                conversation = cur.fetchone()
+
+                if not conversation:
+                    return jsonify(success=False, message="Conversation not found."), 404
+            else:
+                cur.execute("""
+                    INSERT INTO ai_chat_conversations (user_id, title)
+                    VALUES (%s, 'New Chat')
+                    RETURNING id, title
+                """, (uid,))
+                conversation = cur.fetchone()
+                conversation_id = conversation["id"]
+
+            cur.execute("""
+                INSERT INTO ai_chat_messages
+                    (conversation_id, user_id, role, content)
+                VALUES (%s, %s, 'user', %s)
+            """, (conversation_id, uid, question))
+
+            cur.execute("""
+                UPDATE ai_chat_conversations
+                SET title=CASE
+                    WHEN title='New Chat' THEN %s
+                    ELSE title
+                END,
+                updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s AND user_id=%s
+            """, (question[:197] + "..." if len(question) > 200 else question,
+                  conversation_id, uid))
+
             cur.execute("""
                 SELECT name, quantity, purchase_price, selling_price
                 FROM products
@@ -3454,28 +4038,28 @@ def ai_chat_api():
                 ORDER BY name
                 LIMIT 100
             """, (uid,))
-            context["products"] = [
-                {
-                    "name": str(row["name"]),
-                    "quantity": int(row["quantity"] or 0),
-                    "purchase_price": float(row["purchase_price"] or 0),
-                    "selling_price": float(row["selling_price"] or 0),
-                }
-                for row in cur.fetchall()
-            ]
+            context = {
+                "products": [
+                    {
+                        "name": str(row["name"]),
+                        "quantity": int(row["quantity"] or 0),
+                        "purchase_price": float(row["purchase_price"] or 0),
+                        "selling_price": float(row["selling_price"] or 0),
+                    }
+                    for row in cur.fetchall()
+                ]
+            }
 
             cur.execute("""
                 SELECT COALESCE(balance, 0) AS balance
-                FROM cash_account
-                WHERE owner_id=%s
+                FROM cash_account WHERE owner_id=%s
             """, (uid,))
             row = cur.fetchone()
             context["cash_balance"] = float(row["balance"] or 0) if row else 0
 
             cur.execute("""
-                SELECT
-                    COALESCE(SUM(amount), 0) AS sales,
-                    COALESCE(SUM(profit), 0) AS profit
+                SELECT COALESCE(SUM(amount), 0) AS sales,
+                       COALESCE(SUM(profit), 0) AS profit
                 FROM transactions
                 WHERE owner_id=%s AND transaction_type='STOCK OUT'
             """, (uid,))
@@ -3484,20 +4068,18 @@ def ai_chat_api():
             context["recorded_profit"] = float(row["profit"] or 0)
 
             cur.execute("""
-                SELECT
-                    COALESCE(SUM(amount_remaining), 0) AS outstanding_debt
-                FROM debts
-                WHERE owner_id=%s
+                SELECT COALESCE(SUM(amount_remaining), 0) AS outstanding_debt
+                FROM debts WHERE owner_id=%s
             """, (uid,))
             row = cur.fetchone()
             context["outstanding_debt"] = float(row["outstanding_debt"] or 0)
 
+        conn.commit()
+
     except Exception:
-        app.logger.exception("AI chat context query failed")
-        return jsonify(
-            success=False,
-            message="I could not read your business data right now."
-        ), 500
+        conn.rollback()
+        app.logger.exception("AI chat database operation failed")
+        return jsonify(success=False, message="Could not save or read this chat."), 500
     finally:
         conn.close()
 
@@ -3521,7 +4103,6 @@ def ai_chat_api():
     )
 
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-
     if not gemini_key:
         return jsonify(
             success=False,
@@ -3534,16 +4115,9 @@ def ai_chat_api():
     )
 
     body = json.dumps({
-        "systemInstruction": {
-            "parts": [{"text": system_message}]
-        },
-        "contents": [
-            {"parts": [{"text": user_message}]}
-        ],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 700
-        }
+        "systemInstruction": {"parts": [{"text": system_message}]},
+        "contents": [{"parts": [{"text": user_message}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 700}
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -3565,52 +4139,57 @@ def ai_chat_api():
             candidates[0].get("content", {}).get("parts", [])
             if candidates else []
         )
-
         answer = "\n".join(
-            part.get("text", "")
-            for part in parts
-            if part.get("text")
+            part.get("text", "") for part in parts if part.get("text")
         ).strip()
 
         if answer:
-            return jsonify(success=True, answer=answer)
+            conn = get_db()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO ai_chat_messages
+                            (conversation_id, user_id, role, content)
+                        VALUES (%s, %s, 'assistant', %s)
+                    """, (conversation_id, uid, answer))
+                    cur.execute("""
+                        UPDATE ai_chat_conversations
+                        SET updated_at=CURRENT_TIMESTAMP
+                        WHERE id=%s AND user_id=%s
+                    """, (conversation_id, uid))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                app.logger.exception("AI answer persistence failed")
+                return jsonify(
+                    success=False,
+                    message="The answer was generated but could not be saved."
+                ), 500
+            finally:
+                conn.close()
+
+            return jsonify(
+                success=True,
+                answer=answer,
+                conversation_id=conversation_id
+            )
 
         app.logger.warning("Gemini returned no text in its response")
 
     except urllib.error.HTTPError as exc:
-        try:
-            error_data = json.loads(
-                exc.read().decode("utf-8", errors="replace")
-            )
-            error_message = error_data.get("error", {}).get(
-                "message", "No provider error details"
-            )
-        except Exception:
-            error_message = "Could not read provider error details"
-
-        app.logger.warning(
-            "Gemini HTTP error: status=%s, message=%s",
-            exc.code, str(error_message)[:500]
-        )
-
+        app.logger.warning("Gemini HTTP error: status=%s", exc.code)
     except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
         app.logger.warning(
-            "Gemini request failed: error_type=%s, details=%s",
-            type(exc).__name__, str(exc)[:300]
+            "Gemini request failed: error_type=%s", type(exc).__name__
         )
-
     except Exception:
         app.logger.exception("Unexpected Gemini chat provider failure")
 
-    return jsonify(
+        return jsonify(
         success=False,
-        message="The AI service is temporarily unavailable. Please try again."
+        message="The AI service is temporarily unavailable. Please try again.",
+        conversation_id=conversation_id
     ), 503
-
-
-
-
-
 
 
 @app.get("/dashboard")
