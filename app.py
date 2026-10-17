@@ -3427,7 +3427,6 @@ def submit_subscription_payment():
 
 @app.post("/api/ai-chat")
 @login_required
-@subscription_required
 def ai_chat_api():
     uid = current_user_id()
     payload = request.get_json(silent=True) or {}
