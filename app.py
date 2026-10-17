@@ -3572,12 +3572,35 @@ def ai_chat_api():
             if answer:
                 return jsonify(success=True, answer=answer)
 
-        except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError):
-            app.logger.warning("An AI provider request failed; trying fallback.")
+
+        except urllib.error.HTTPError as exc:
+            try:
+                error_data = json.loads(
+                    exc.read().decode("utf-8", errors="replace")
+                )
+                error_message = error_data.get("error", {}).get(
+                    "message", "No provider error details"
+                )
+            except Exception:
+                error_message = "Could not read provider error details"
+
+            app.logger.warning(
+                "AI provider HTTP error: status=%s, model=%s, message=%s",
+                exc.code, model, str(error_message)[:500]
+            )
             continue
+
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
+            app.logger.warning(
+                "AI provider request failed: model=%s, error_type=%s, details=%s",
+                model, type(exc).__name__, str(exc)[:300]
+            )
+            continue
+
         except Exception:
             app.logger.exception("Unexpected AI chat provider failure")
             continue
+
 
     return jsonify(
         success=False,
