@@ -1856,98 +1856,302 @@ setInterval(updateRwandaTime,1000);
 </script>
 
 
+
 <!-- STOCKMANAGER AI CHAT WIDGET -->
 <style>
-#stockmanager-ai-widget{position:fixed;right:20px;bottom:20px;z-index:99999;font-family:Arial,sans-serif}
-#stockmanager-ai-toggle{border:0;border-radius:28px;padding:14px 19px;background:#0f172a;color:#fff;font-weight:bold;cursor:pointer;box-shadow:0 4px 18px #0003}
-#stockmanager-ai-panel{display:none;position:absolute;right:0;bottom:62px;width:min(360px,calc(100vw - 32px));height:440px;max-height:70vh;background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 8px 30px #0003;overflow:hidden}
-#stockmanager-ai-header{background:#0f172a;color:#fff;padding:14px;font-weight:bold;display:flex;justify-content:space-between;align-items:center}
-#stockmanager-ai-close{border:0;background:transparent;color:#fff;font-size:22px;cursor:pointer}
-#stockmanager-ai-messages{height:calc(100% - 125px);overflow-y:auto;padding:12px;background:#f8fafc}
-.stockmanager-ai-message{white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px;margin:8px 0;border-radius:12px;max-width:90%;font-size:14px;line-height:1.45}
-.stockmanager-ai-user{margin-left:auto;background:#dbeafe}
-.stockmanager-ai-bot{margin-right:auto;background:#fff;border:1px solid #e5e7eb}
-#stockmanager-ai-form{display:flex;gap:7px;padding:10px;border-top:1px solid #e5e7eb}
-#stockmanager-ai-input{min-width:0;flex:1;padding:10px;border:1px solid #cbd5e1;border-radius:9px;font-size:14px}
-#stockmanager-ai-send{border:0;border-radius:9px;padding:0 13px;background:#2563eb;color:#fff;font-weight:bold;cursor:pointer}
-#stockmanager-ai-send:disabled{opacity:.6;cursor:wait}
+#stockmanager-ai-widget {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 99999;
+  font-family: Arial, sans-serif;
+}
+#stockmanager-ai-toggle {
+  border: 0;
+  border-radius: 28px;
+  padding: 13px 19px;
+  background: linear-gradient(135deg,#0f766e,#0f172a);
+  color: #fff;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 6px 22px #0003;
+}
+#stockmanager-help-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 62px;
+  width: min(300px,calc(100vw - 40px));
+  padding: 18px;
+  border-radius: 20px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 12px 38px #0003;
+  border: 1px solid #e2e8f0;
+}
+#stockmanager-help-menu h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+#stockmanager-help-menu p {
+  margin: 0 0 16px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+#stockmanager-whatsapp {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  margin-bottom: 12px;
+  text-decoration: none;
+  border-radius: 13px;
+  background: #e9fbef;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+#stockmanager-whatsapp .wa-icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #25d366;
+  color: white;
+  font-size: 25px;
+  font-weight: bold;
+}
+#stockmanager-whatsapp strong,
+#stockmanager-whatsapp small {
+  display: block;
+}
+#stockmanager-whatsapp small {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #15803d;
+}
+#stockmanager-chat-us {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg,#0f766e,#0f172a);
+  color: white;
+  font-weight: bold;
+  font-size: 14px;
+  cursor: pointer;
+}
+#stockmanager-ai-panel {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 62px;
+  width: min(360px,calc(100vw - 32px));
+  height: 440px;
+  max-height: 70vh;
+  background: #fff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px #0003;
+  overflow: hidden;
+}
+#stockmanager-ai-header {
+  background: #0f172a;
+  color: #fff;
+  padding: 14px;
+  font-weight: bold;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+#stockmanager-ai-close {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+#stockmanager-ai-messages {
+  height: calc(100% - 125px);
+  overflow-y: auto;
+  padding: 12px;
+  background: #f8fafc;
+}
+.stockmanager-ai-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  margin: 8px 0;
+  border-radius: 12px;
+  max-width: 90%;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.stockmanager-ai-user {
+  margin-left: auto;
+  background: #dbeafe;
+}
+.stockmanager-ai-bot {
+  margin-right: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+}
+#stockmanager-ai-form {
+  display: flex;
+  gap: 7px;
+  padding: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+#stockmanager-ai-input {
+  min-width: 0;
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  font-size: 14px;
+}
+#stockmanager-ai-send {
+  border: 0;
+  border-radius: 9px;
+  padding: 0 13px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: bold;
+  cursor: pointer;
+}
+#stockmanager-ai-send:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+@media(max-width:480px) {
+  #stockmanager-ai-widget {
+    right: 12px;
+    bottom: 12px;
+  }
+}
 </style>
+
 <div id="stockmanager-ai-widget">
+  <div id="stockmanager-help-menu">
+    <h3>Help &amp; Assistance</h3>
+    <p>How can we help you today? Choose your preferred support option.</p>
+
+    <a id="stockmanager-whatsapp"
+       href="https://wa.me/250732438879?text=Hello%20StockManager%20Team%2C%20I%20need%20assistance."
+       target="_blank"
+       rel="noopener noreferrer">
+      <span class="wa-icon" aria-hidden="true">☎</span>
+      <span>
+        <strong>WhatsApp Business</strong>
+        <small>Private questions · Chat with our team</small>
+      </span>
+    </a>
+
+    <button id="stockmanager-chat-us" type="button">
+      ✨ Chat with Us — AI Assistant
+    </button>
+  </div>
+
   <div id="stockmanager-ai-panel">
     <div id="stockmanager-ai-header">
       <span>STOCKMANAGER AI</span>
-      <button id="stockmanager-ai-close" type="button" aria-label="Close chatbot">&times;</button>
+      <button id="stockmanager-ai-close"
+              type="button"
+              aria-label="Close chatbot">&times;</button>
     </div>
     <div id="stockmanager-ai-messages">
       <div class="stockmanager-ai-message stockmanager-ai-bot">Muraho! Ask me about your stock, sales totals, cash balance, debts, or nursing education.</div>
     </div>
     <form id="stockmanager-ai-form">
-      <input id="stockmanager-ai-input" type="text" maxlength="2000" placeholder="Andika ikibazo..." autocomplete="off" required>
+      <input id="stockmanager-ai-input"
+             type="text"
+             maxlength="2000"
+             placeholder="Andika ikibazo..."
+             autocomplete="off"
+             required>
       <button id="stockmanager-ai-send" type="submit">Send</button>
     </form>
   </div>
-  <button id="stockmanager-ai-toggle" type="button">Ask STOCKMANAGER AI</button>
+
+  <button id="stockmanager-ai-toggle" type="button">
+    ◉ Help &amp; Assistance
+  </button>
 </div>
+
 <script>
 (function(){
-  const panel=document.getElementById("stockmanager-ai-panel");
-  const toggle=document.getElementById("stockmanager-ai-toggle");
-  const close=document.getElementById("stockmanager-ai-close");
-  const messages=document.getElementById("stockmanager-ai-messages");
-  const form=document.getElementById("stockmanager-ai-form");
-  const input=document.getElementById("stockmanager-ai-input");
-  const send=document.getElementById("stockmanager-ai-send");
+  const panel = document.getElementById("stockmanager-ai-panel");
+  const toggle = document.getElementById("stockmanager-ai-toggle");
+  const close = document.getElementById("stockmanager-ai-close");
+  const menu = document.getElementById("stockmanager-help-menu");
+  const chatButton = document.getElementById("stockmanager-chat-us");
+  const messages = document.getElementById("stockmanager-ai-messages");
+  const form = document.getElementById("stockmanager-ai-form");
+  const input = document.getElementById("stockmanager-ai-input");
+  const send = document.getElementById("stockmanager-ai-send");
 
-  function addMessage(text,who){
-    const el=document.createElement("div");
-    el.className="stockmanager-ai-message "+(who==="user"?"stockmanager-ai-user":"stockmanager-ai-bot");
-    el.textContent=text;
+  function addMessage(text, who){
+    const el = document.createElement("div");
+    el.className = "stockmanager-ai-message " +
+      (who === "user" ? "stockmanager-ai-user" : "stockmanager-ai-bot");
+    el.textContent = text;
     messages.appendChild(el);
-    messages.scrollTop=messages.scrollHeight;
+    messages.scrollTop = messages.scrollHeight;
     return el;
   }
 
-  toggle.addEventListener("click",function(){
-    panel.style.display="block";
-    toggle.style.display="none";
+  toggle.addEventListener("click", function(){
+    const isOpen = menu.style.display === "block";
+    menu.style.display = isOpen ? "none" : "block";
+  });
+
+  chatButton.addEventListener("click", function(){
+    menu.style.display = "none";
+    panel.style.display = "block";
+    toggle.style.display = "none";
     input.focus();
   });
-  close.addEventListener("click",function(){
-    panel.style.display="none";
-    toggle.style.display="inline-block";
+
+  close.addEventListener("click", function(){
+    panel.style.display = "none";
+    toggle.style.display = "block";
   });
 
-  form.addEventListener("submit",async function(event){
+  form.addEventListener("submit", async function(event){
     event.preventDefault();
-    const question=input.value.trim();
+    const question = input.value.trim();
     if(!question || send.disabled) return;
 
-    addMessage(question,"user");
-    input.value="";
-    send.disabled=true;
-    const waiting=addMessage("Thinking...","bot");
+    addMessage(question, "user");
+    input.value = "";
+    send.disabled = true;
+    const waiting = addMessage("Thinking...", "bot");
 
-    try{
-      const response=await fetch("/api/ai-chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:question})
+    try {
+      const response = await fetch("/api/ai-chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message: question})
       });
-      const data=await response.json();
-      waiting.textContent=response.ok && data.success
+      const data = await response.json();
+      waiting.textContent = response.ok && data.success
         ? data.answer
         : (data.message || "AI is temporarily unavailable. Please try again.");
-    }catch(error){
-      waiting.textContent="Connection problem. Please check your internet and try again.";
-    }finally{
-      send.disabled=false;
+    } catch(error) {
+      waiting.textContent = "Connection problem. Please check your internet and try again.";
+    } finally {
+      send.disabled = false;
       input.focus();
-      messages.scrollTop=messages.scrollHeight;
+      messages.scrollTop = messages.scrollHeight;
     }
   });
 })();
 </script>
 <!-- END STOCKMANAGER AI CHAT WIDGET -->
+
 
 </body></html>
 """
