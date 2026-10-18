@@ -1,0 +1,159 @@
+/* STOCKMANAGER AI CHAT DESIGN */
+
+#stockmanager-ai-panel {
+  display: none;
+  position: fixed;
+  right: 20px;
+  bottom: 90px;
+  width: 360px;
+  max-width: calc(100vw - 28px);
+  height: 480px;
+  max-height: calc(100vh - 120px);
+  background: #ffffff;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  box-shadow: 0 15px 45px rgba(15, 23, 42, 0.22);
+  z-index: 99999;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  color: #0f172a;
+  box-sizing: border-box;
+}
+
+#stockmanager-ai-panel *,
+#stockmanager-ai-toggle {
+  box-sizing: border-box;
+}
+
+#stockmanager-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  background: linear-gradient(135deg, #0f766e, #0f172a);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+#stockmanager-ai-close {
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+#stockmanager-ai-messages {
+  height: calc(100% - 125px);
+  overflow-y: auto;
+  padding: 16px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stockmanager-ai-message {
+  max-width: 88%;
+  padding: 11px 13px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.stockmanager-ai-bot {
+  align-self: flex-start;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #1e293b;
+  border-bottom-left-radius: 4px;
+}
+
+.stockmanager-ai-user {
+  align-self: flex-end;
+  background: #0f766e;
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+#stockmanager-ai-form {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: #ffffff;
+  border-top: 1px solid #e2e8f0;
+}
+
+#stockmanager-ai-input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  outline: none;
+  font-size: 14px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+#stockmanager-ai-input:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+#stockmanager-ai-send {
+  border: 0;
+  border-radius: 10px;
+  padding: 0 15px;
+  background: #0f766e;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#stockmanager-ai-send:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+#stockmanager-ai-toggle {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 99998;
+  border: 0;
+  border-radius: 30px;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #0f766e, #0f172a);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
+  cursor: pointer;
+}
+
+@media (max-width: 480px) {
+  #stockmanager-ai-panel {
+    right: 10px;
+    bottom: 78px;
+    width: calc(100vw - 20px);
+    max-width: none;
+    height: min(480px, calc(100dvh - 100px));
+  }
+
+  #stockmanager-ai-toggle {
+    right: 12px;
+    bottom: 12px;
+  }
+}
