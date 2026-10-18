@@ -1932,6 +1932,53 @@ setInterval(updateRwandaTime,1000);
   font-size: 11px;
   color: #15803d;
 }
+
+#stockmanager-whatsapp-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 16px 12px;
+  box-sizing: border-box;
+  border: 1px solid #bbf7d0;
+  border-radius: 14px;
+  background: #f0fdf4;
+  color: #166534;
+  text-decoration: none;
+  font-weight: bold;
+  transition: background .2s, transform .2s;
+}
+#stockmanager-whatsapp-link:hover {
+  background: #dcfce7;
+  transform: translateY(-1px);
+}
+.stockmanager-whatsapp-logo {
+  display: block;
+  width: 76px;
+  height: 76px;
+}
+.stockmanager-whatsapp-logo svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.stockmanager-whatsapp-label {
+  display: block;
+  text-align: center;
+}
+#stockmanager-whatsapp-link strong,
+#stockmanager-whatsapp-link small {
+  display: block;
+}
+#stockmanager-whatsapp-link strong {
+  font-size: 15px;
+}
+#stockmanager-whatsapp-link small {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #15803d;
+}
 #stockmanager-chat-us {
   width: 100%;
   padding: 13px;
@@ -1943,36 +1990,7 @@ setInterval(updateRwandaTime,1000);
   font-size: 14px;
   cursor: pointer;
 }
-#stockmanager-ai-panel {
-  display: none;
-  position: absolute;
-  right: 0;
-  bottom: 62px;
-  width: min(360px,calc(100vw - 32px));
-  height: 440px;
-  max-height: 70vh;
-  background: #fff;
-  color: #111827;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  box-shadow: 0 8px 30px #0003;
-  overflow: hidden;
-}
-#stockmanager-ai-header {
-  background: #0f172a;
-  color: #fff;
-  padding: 14px;
-  font-weight: bold;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-#stockmanager-ai-close {
-  border: 0;
-  background: transparent;
-  color: #fff;
-  font-size: 22px;
-  cursor: pointer;
+
 }
 #stockmanager-ai-messages {
   height: calc(100% - 125px);
@@ -2039,20 +2057,36 @@ setInterval(updateRwandaTime,1000);
     <h3>Help &amp; Assistance</h3>
     <p>How can we help you today? Choose your preferred support option.</p>
 
-    <a id="stockmanager-whatsapp"
-       href="https://wa.me/250732438879?text=Hello%20StockManager%20Team%2C%20I%20need%20assistance."
-       target="_blank"
-       rel="noopener noreferrer">
-      <span class="wa-icon" aria-hidden="true">☎</span>
-      <span>
-        <strong>WhatsApp Business</strong>
-        <small>Private questions · Chat with our team</small>
-      </span>
-    </a>
+   
+<a id="stockmanager-whatsapp-link"
+   href="https://wa.me/250732438879?text=Hello%20StockManager%20Team%2C%20I%20need%20assistance."
+   target="_blank"
+   rel="noopener noreferrer"
+   aria-label="Chat with us on WhatsApp">
 
-    <button id="stockmanager-chat-us" type="button">
-      ✨ Chat with Us — AI Assistant
-    </button>
+  <span class="stockmanager-whatsapp-logo" aria-hidden="true">
+    <svg viewBox="0 0 100 100" role="img">
+      <path d="M16 78 L21 61 A39 39 0 1 1 35 81 Z"
+            fill="#25D366"/>
+      <circle cx="53" cy="45" r="33" fill="#25D366"/>
+      <path d="M38 29 Q34 27 32 34 Q29 42 39 54
+               Q49 67 63 69 Q71 70 76 62
+               Q78 58 72 55 L64 51 Q61 49 59 53
+               L55 58 Q46 55 40 45 L44 40
+               Q46 37 44 34 Z"
+            fill="#ffffff"/>
+    </svg>
+  </span>
+
+  <span class="stockmanager-whatsapp-label">
+    <strong>Chat with Us</strong>
+    <small>WhatsApp Business · Talk to our team</small>
+  </span>
+</a>
+
+<button id="stockmanager-chat-us" type="button">
+  ✨ Ask AI
+</button>
   </div>
 
   <div id="stockmanager-ai-panel">
