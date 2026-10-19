@@ -303,6 +303,40 @@ def init_database():
                 ON ai_chat_messages(conversation_id, id)
             """)
 
+        # AI CHAT CONVERSATIONS
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_conversations (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    title VARCHAR(200) NOT NULL DEFAULT 'New Chat',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INTEGER NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+                    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_conversations_owner_updated
+                ON ai_conversations(owner_id, updated_at DESC)
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_conversation
+                ON ai_chat_messages(conversation_id, id)
+            """)
+
+
         conn.commit()
         create_default_admin(conn)
         with conn.cursor() as cur:
