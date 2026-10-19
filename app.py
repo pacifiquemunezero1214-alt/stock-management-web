@@ -930,8 +930,8 @@ DASHBOARD_HTML = """
 </div>
 <div style="margin-top:12px;padding:12px;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;">
   <div style="font-size:13px;color:#166534;font-weight:700;">MoMo PAYMENT</div>
-  <div style="font-size:22px;font-weight:800;color:#166534;margin-top:3px;">0790319718</div>
-  <div style="font-size:13px;color:#166534;margin-top:3px;">Account name: <strong>Jean Bosco MUZABIBU</strong></div>
+  <div style="font-size:22px;font-weight:800;color:#166534;margin-top:3px;">0798386664</div>
+  <div style="font-size:13px;color:#166534;margin-top:3px;">Account name: <strong>Pacifique MUNEZERO</strong></div>
 </div>
 <div style="margin-top:16px;">
   <label style="display:block;font-weight:700;margin-bottom:7px;">Upload MoMo payment screenshot</label>
