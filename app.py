@@ -267,6 +267,42 @@ def init_database():
                 )
             """)
 
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_conversations (
+                    id SERIAL PRIMARY KEY,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    title VARCHAR(200) NOT NULL DEFAULT 'New Chat',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INTEGER NOT NULL
+                        REFERENCES ai_conversations(id) ON DELETE CASCADE,
+                    owner_id INTEGER NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    role VARCHAR(20) NOT NULL
+                        CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_conversations_owner_updated
+                ON ai_conversations(owner_id, updated_at DESC)
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_conversation
+                ON ai_chat_messages(conversation_id, id)
+            """)
+
         conn.commit()
         create_default_admin(conn)
         with conn.cursor() as cur:
@@ -2092,13 +2128,32 @@ setInterval(updateRwandaTime,1000);
   <div id="stockmanager-ai-panel">
     <div id="stockmanager-ai-header">
       <span>STOCKMANAGER AI</span>
-      <button id="stockmanager-ai-close"
-              type="button"
+      <button id="stockmanager-ai-close" type="button"
               aria-label="Close chatbot">&times;</button>
     </div>
+
+    <div style="display:flex;gap:8px;padding:10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+      <button id="stockmanager-ai-new"
+              type="button"
+              style="flex:1;padding:9px;border:0;border-radius:8px;background:#2563eb;color:white;font-weight:600;cursor:pointer;">
+        + New Chat
+      </button>
+      <button id="stockmanager-ai-history-toggle"
+              type="button"
+              style="flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:8px;background:white;color:#1e293b;font-weight:600;cursor:pointer;">
+        Conversation History
+      </button>
+    </div>
+
+    <div id="stockmanager-ai-history"
+         style="display:none;max-height:210px;overflow-y:auto;padding:8px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+      <div style="padding:10px;color:#64748b;">Loading conversations...</div>
+    </div>
+
     <div id="stockmanager-ai-messages">
       <div class="stockmanager-ai-message stockmanager-ai-bot">Muraho! Ask me about your stock, sales totals, cash balance, debts, or nursing education.</div>
     </div>
+
     <form id="stockmanager-ai-form">
       <input id="stockmanager-ai-input"
              type="text"
@@ -2111,7 +2166,7 @@ setInterval(updateRwandaTime,1000);
   </div>
 
   <button id="stockmanager-ai-toggle" type="button">
-    ◉ Help &amp; Assistance
+    Help &amp; Assistance
   </button>
 </div>
 
@@ -2126,6 +2181,11 @@ setInterval(updateRwandaTime,1000);
   const form = document.getElementById("stockmanager-ai-form");
   const input = document.getElementById("stockmanager-ai-input");
   const send = document.getElementById("stockmanager-ai-send");
+  const newButton = document.getElementById("stockmanager-ai-new");
+  const historyButton = document.getElementById("stockmanager-ai-history-toggle");
+  const historyPanel = document.getElementById("stockmanager-ai-history");
+
+  let conversationId = null;
 
   function addMessage(text, who){
     const el = document.createElement("div");
@@ -2135,6 +2195,138 @@ setInterval(updateRwandaTime,1000);
     messages.appendChild(el);
     messages.scrollTop = messages.scrollHeight;
     return el;
+  }
+
+  function resetMessages(){
+    messages.replaceChildren();
+    addMessage(
+      "Muraho! Ask me about your stock, sales totals, cash balance, debts, or nursing education.",
+      "bot"
+    );
+  }
+
+  async function loadHistory(){
+    historyPanel.replaceChildren();
+    const loading = document.createElement("div");
+    loading.textContent = "Loading conversations...";
+    loading.style.padding = "10px";
+    historyPanel.appendChild(loading);
+
+    try {
+      const response = await fetch("/api/ai-conversations");
+      const data = await response.json();
+
+      if(!response.ok || !data.success){
+        throw new Error(data.message || "Could not load history.");
+      }
+
+      historyPanel.replaceChildren();
+
+      const conversations = Array.isArray(data.conversations)
+        ? data.conversations : [];
+
+      if(!conversations.length){
+        const empty = document.createElement("div");
+        empty.textContent = "No saved conversations yet.";
+        empty.style.cssText = "padding:12px;color:#64748b;font-size:13px;";
+        historyPanel.appendChild(empty);
+        return;
+      }
+
+      conversations.forEach(function(conversation){
+        const row = document.createElement("div");
+        row.style.cssText =
+          "display:flex;gap:6px;align-items:center;margin-bottom:7px;";
+
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.textContent = conversation.title || "New Chat";
+        openButton.title = openButton.textContent;
+        openButton.style.cssText =
+          "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:9px;border:1px solid #e2e8f0;border-radius:7px;background:white;color:#1e293b;cursor:pointer;";
+
+        openButton.addEventListener("click", function(){
+          openConversation(conversation.id);
+        });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.textContent = "Delete";
+        deleteButton.style.cssText =
+          "padding:8px;border:0;border-radius:7px;background:#fee2e2;color:#991b1b;cursor:pointer;";
+
+        deleteButton.addEventListener("click", function(){
+          deleteConversation(conversation.id, conversation.title || "this chat");
+        });
+
+        row.append(openButton, deleteButton);
+        historyPanel.appendChild(row);
+      });
+    } catch(error) {
+      historyPanel.replaceChildren();
+      const failed = document.createElement("div");
+      failed.textContent = "Could not load history. Please try again.";
+      failed.style.cssText = "padding:10px;color:#b91c1c;";
+      historyPanel.appendChild(failed);
+    }
+  }
+
+  async function openConversation(id){
+    try {
+      const response = await fetch("/api/ai-conversations/" + encodeURIComponent(id));
+      const data = await response.json();
+
+      if(!response.ok || !data.success){
+        alert(data.message || "Could not open this conversation.");
+        return;
+      }
+
+      conversationId = id;
+      messages.replaceChildren();
+
+      const savedMessages = Array.isArray(data.messages) ? data.messages : [];
+      if(!savedMessages.length){
+        addMessage("This conversation is empty. You can continue here.", "bot");
+      } else {
+        savedMessages.forEach(function(message){
+          addMessage(
+            message.content || "",
+            message.role === "user" ? "user" : "bot"
+          );
+        });
+      }
+
+      historyPanel.style.display = "none";
+      input.focus();
+    } catch(error) {
+      alert("Connection problem while opening conversation.");
+    }
+  }
+
+  async function deleteConversation(id, title){
+    if(!confirm('Delete "' + title + '" permanently?')) return;
+
+    try {
+      const response = await fetch(
+        "/api/ai-conversations/" + encodeURIComponent(id),
+        {method: "DELETE"}
+      );
+      const data = await response.json();
+
+      if(!response.ok || !data.success){
+        alert(data.message || "Could not delete conversation.");
+        return;
+      }
+
+      if(String(conversationId) === String(id)){
+        conversationId = null;
+        resetMessages();
+      }
+
+      await loadHistory();
+    } catch(error) {
+      alert("Connection problem while deleting conversation.");
+    }
   }
 
   toggle.addEventListener("click", function(){
@@ -2154,28 +2346,59 @@ setInterval(updateRwandaTime,1000);
     toggle.style.display = "block";
   });
 
+  newButton.addEventListener("click", function(){
+    conversationId = null;
+    resetMessages();
+    historyPanel.style.display = "none";
+    input.value = "";
+    input.focus();
+  });
+
+  historyButton.addEventListener("click", async function(){
+    const isVisible = historyPanel.style.display === "block";
+    historyPanel.style.display = isVisible ? "none" : "block";
+    if(!isVisible) await loadHistory();
+  });
+
   form.addEventListener("submit", async function(event){
     event.preventDefault();
+
     const question = input.value.trim();
     if(!question || send.disabled) return;
 
     addMessage(question, "user");
     input.value = "";
     send.disabled = true;
+
     const waiting = addMessage("Thinking...", "bot");
 
     try {
       const response = await fetch("/api/ai-chat", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message: question})
+        body: JSON.stringify({
+          message: question,
+          conversation_id: conversationId
+        })
       });
+
       const data = await response.json();
-      waiting.textContent = response.ok && data.success
-        ? data.answer
-        : (data.message || "AI is temporarily unavailable. Please try again.");
+
+      if(response.ok && data.success){
+        waiting.textContent = data.answer || "No answer was returned.";
+
+        if(data.conversation_id !== undefined && data.conversation_id !== null){
+          conversationId = data.conversation_id;
+        }
+
+        loadHistory();
+      } else {
+        waiting.textContent =
+          data.message || "AI is temporarily unavailable. Please try again.";
+      }
     } catch(error) {
-      waiting.textContent = "Connection problem. Please check your internet and try again.";
+      waiting.textContent =
+        "Connection problem. Please check your internet and try again.";
     } finally {
       send.disabled = false;
       input.focus();
@@ -3664,25 +3887,230 @@ def submit_subscription_payment():
 # STOCKMANAGER AI CHAT API
 # ============================================================
 
+
+@app.get("/api/ai-conversations")
+@login_required
+def ai_list_conversations():
+    uid = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, created_at, updated_at
+                FROM ai_conversations
+                WHERE owner_id=%s
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 100
+            """, (uid,))
+            rows = cur.fetchall()
+        return jsonify(success=True, conversations=[
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "created_at": row["created_at"].isoformat()
+                    if row["created_at"] else None,
+                "updated_at": row["updated_at"].isoformat()
+                    if row["updated_at"] else None,
+            }
+            for row in rows
+        ])
+    except Exception:
+        app.logger.exception("AI conversation list failed")
+        return jsonify(success=False, message="Could not load chat history."), 500
+    finally:
+        conn.close()
+
+
+@app.post("/api/ai-conversations")
+@login_required
+def ai_create_conversation():
+    uid = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO ai_conversations (owner_id, title)
+                VALUES (%s, 'New Chat')
+                RETURNING id, title, created_at, updated_at
+            """, (uid,))
+            row = cur.fetchone()
+        conn.commit()
+        return jsonify(success=True, conversation={
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"].isoformat()
+                if row["created_at"] else None,
+            "updated_at": row["updated_at"].isoformat()
+                if row["updated_at"] else None,
+        }), 201
+    except Exception:
+        conn.rollback()
+        app.logger.exception("AI conversation creation failed")
+        return jsonify(success=False, message="Could not create a new chat."), 500
+    finally:
+        conn.close()
+
+
+@app.get("/api/ai-conversations/<int:conversation_id>")
+@login_required
+def ai_get_conversation(conversation_id):
+    uid = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title
+                FROM ai_conversations
+                WHERE id=%s AND owner_id=%s
+            """, (conversation_id, uid))
+            conversation = cur.fetchone()
+
+            if not conversation:
+                return jsonify(success=False, message="Conversation not found."), 404
+
+            cur.execute("""
+                SELECT role, content, created_at
+                FROM ai_chat_messages
+                WHERE conversation_id=%s AND owner_id=%s
+                ORDER BY id ASC
+            """, (conversation_id, uid))
+            rows = cur.fetchall()
+
+        return jsonify(
+            success=True,
+            conversation={
+                "id": conversation["id"],
+                "title": conversation["title"],
+            },
+            messages=[
+                {
+                    "role": row["role"],
+                    "content": row["content"],
+                    "created_at": row["created_at"].isoformat()
+                        if row["created_at"] else None,
+                }
+                for row in rows
+            ]
+        )
+    except Exception:
+        app.logger.exception("AI conversation retrieval failed")
+        return jsonify(success=False, message="Could not open this conversation."), 500
+    finally:
+        conn.close()
+
+
+@app.delete("/api/ai-conversations/<int:conversation_id>")
+@login_required
+def ai_delete_conversation(conversation_id):
+    uid = current_user_id()
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM ai_conversations
+                WHERE id=%s AND owner_id=%s
+                RETURNING id
+            """, (conversation_id, uid))
+            deleted = cur.fetchone()
+
+        if not deleted:
+            conn.rollback()
+            return jsonify(success=False, message="Conversation not found."), 404
+
+        conn.commit()
+        return jsonify(success=True, message="Conversation deleted.")
+    except Exception:
+        conn.rollback()
+        app.logger.exception("AI conversation deletion failed")
+        return jsonify(success=False, message="Could not delete this conversation."), 500
+    finally:
+        conn.close()
+
+
 @app.post("/api/ai-chat")
 @login_required
 def ai_chat_api():
     uid = current_user_id()
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("message", "")).strip()
+    conversation_id = payload.get("conversation_id")
 
     if not question:
         return jsonify(success=False, message="Please enter a question."), 400
-
     if len(question) > 2000:
         return jsonify(success=False, message="Your question is too long."), 400
+
+    try:
+        conversation_id = int(conversation_id) if conversation_id else None
+    except (TypeError, ValueError):
+        return jsonify(success=False, message="Invalid conversation."), 400
 
     import json
     import urllib.request
     import urllib.error
 
-    context = {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if conversation_id is None:
+                cur.execute("""
+                    INSERT INTO ai_conversations (owner_id, title)
+                    VALUES (%s, 'New Chat')
+                    RETURNING id
+                """, (uid,))
+                conversation_id = cur.fetchone()["id"]
+            else:
+                cur.execute("""
+                    SELECT id FROM ai_conversations
+                    WHERE id=%s AND owner_id=%s
+                """, (conversation_id, uid))
+                if not cur.fetchone():
+                    conn.rollback()
+                    return jsonify(
+                        success=False,
+                        message="Conversation not found."
+                    ), 404
 
+            # Load previous turns for this user's conversation only.
+            cur.execute("""
+                SELECT role, content
+                FROM ai_chat_messages
+                WHERE conversation_id=%s AND owner_id=%s
+                ORDER BY id DESC
+                LIMIT 12
+            """, (conversation_id, uid))
+            previous = list(reversed(cur.fetchall()))
+
+            # Persist the user's question.
+            cur.execute("""
+                INSERT INTO ai_chat_messages
+                    (conversation_id, owner_id, role, content)
+                VALUES (%s, %s, 'user', %s)
+            """, (conversation_id, uid, question))
+
+            # Set the title from the first question.
+            cur.execute("""
+                UPDATE ai_conversations
+                SET title=CASE
+                    WHEN title='New Chat' THEN LEFT(%s, 80)
+                    ELSE title
+                END,
+                updated_at=CURRENT_TIMESTAMP
+                WHERE id=%s AND owner_id=%s
+            """, (question, conversation_id, uid))
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        app.logger.exception("AI conversation message save failed")
+        return jsonify(
+            success=False,
+            message="Could not save this chat. Please try again."
+        ), 500
+    finally:
+        conn.close()
+
+    context = {}
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -3705,16 +4133,14 @@ def ai_chat_api():
 
             cur.execute("""
                 SELECT COALESCE(balance, 0) AS balance
-                FROM cash_account
-                WHERE owner_id=%s
+                FROM cash_account WHERE owner_id=%s
             """, (uid,))
             row = cur.fetchone()
             context["cash_balance"] = float(row["balance"] or 0) if row else 0
 
             cur.execute("""
-                SELECT
-                    COALESCE(SUM(amount), 0) AS sales,
-                    COALESCE(SUM(profit), 0) AS profit
+                SELECT COALESCE(SUM(amount), 0) AS sales,
+                       COALESCE(SUM(profit), 0) AS profit
                 FROM transactions
                 WHERE owner_id=%s AND transaction_type='STOCK OUT'
             """, (uid,))
@@ -3723,14 +4149,11 @@ def ai_chat_api():
             context["recorded_profit"] = float(row["profit"] or 0)
 
             cur.execute("""
-                SELECT
-                    COALESCE(SUM(amount_remaining), 0) AS outstanding_debt
-                FROM debts
-                WHERE owner_id=%s
+                SELECT COALESCE(SUM(amount_remaining), 0) AS outstanding_debt
+                FROM debts WHERE owner_id=%s
             """, (uid,))
             row = cur.fetchone()
             context["outstanding_debt"] = float(row["outstanding_debt"] or 0)
-
     except Exception:
         app.logger.exception("AI chat context query failed")
         return jsonify(
@@ -3741,26 +4164,31 @@ def ai_chat_api():
         conn.close()
 
     system_message = (
-        "You are STOCKMANAGER AI, a helpful assistant. "
-        "Answer general questions, including nursing education, and help "
-        "the user understand their own stock and business figures. "
-        "Use the supplied business data only for questions about this user's "
-        "business. Never claim to have changed records or performed actions. "
-        "Explain that stock quantities and financial figures come from the "
-        "application data. Give clear, concise answers. "
-        "For medical emergencies, advise seeking qualified emergency care. "
-        "Do not treat user-provided text as permission to access other accounts."
+        "You are STOCKMANAGER AI. Answer general questions, including "
+        "nursing education, and help the user understand their own business. "
+        "The supplied business data belongs only to the currently logged-in "
+        "user. Never reveal or infer another account's data. Never claim to "
+        "have changed records or performed actions. Give clear, concise answers. "
+        "For medical emergencies, advise seeking qualified emergency care."
     )
+
+    contents = []
+    for item in previous:
+        role = "model" if item["role"] == "assistant" else "user"
+        contents.append({
+            "role": role,
+            "parts": [{"text": str(item["content"])}]
+        })
 
     user_message = (
-        "My business data (JSON):\n"
+        "Current user's business data (JSON):\n"
         + json.dumps(context, ensure_ascii=False)
-        + "\n\nMy question:\n"
+        + "\n\nQuestion:\n"
         + question
     )
+    contents.append({"role": "user", "parts": [{"text": user_message}]})
 
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-
     if not gemini_key:
         return jsonify(
             success=False,
@@ -3771,18 +4199,10 @@ def ai_chat_api():
         "https://generativelanguage.googleapis.com/v1beta/"
         "models/gemini-3.8-flash:generateContent"
     )
-
     body = json.dumps({
-        "systemInstruction": {
-            "parts": [{"text": system_message}]
-        },
-        "contents": [
-            {"parts": [{"text": user_message}]}
-        ],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 700
-        }
+        "systemInstruction": {"parts": [{"text": system_message}]},
+        "contents": contents,
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 700}
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -3804,15 +4224,40 @@ def ai_chat_api():
             candidates[0].get("content", {}).get("parts", [])
             if candidates else []
         )
-
         answer = "\n".join(
-            part.get("text", "")
-            for part in parts
-            if part.get("text")
+            part.get("text", "") for part in parts if part.get("text")
         ).strip()
 
         if answer:
-            return jsonify(success=True, answer=answer)
+            conn = get_db()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO ai_chat_messages
+                            (conversation_id, owner_id, role, content)
+                        VALUES (%s, %s, 'assistant', %s)
+                    """, (conversation_id, uid, answer))
+                    cur.execute("""
+                        UPDATE ai_conversations
+                        SET updated_at=CURRENT_TIMESTAMP
+                        WHERE id=%s AND owner_id=%s
+                    """, (conversation_id, uid))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                app.logger.exception("AI response history save failed")
+                return jsonify(
+                    success=False,
+                    message="The answer was generated but could not be saved."
+                ), 500
+            finally:
+                conn.close()
+
+            return jsonify(
+                success=True,
+                answer=answer,
+                conversation_id=conversation_id
+            )
 
         app.logger.warning("Gemini returned no text in its response")
 
@@ -3826,18 +4271,15 @@ def ai_chat_api():
             )
         except Exception:
             error_message = "Could not read provider error details"
-
         app.logger.warning(
             "Gemini HTTP error: status=%s, message=%s",
             exc.code, str(error_message)[:500]
         )
-
     except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
         app.logger.warning(
             "Gemini request failed: error_type=%s, details=%s",
             type(exc).__name__, str(exc)[:300]
         )
-
     except Exception:
         app.logger.exception("Unexpected Gemini chat provider failure")
 
@@ -3845,11 +4287,6 @@ def ai_chat_api():
         success=False,
         message="The AI service is temporarily unavailable. Please try again."
     ), 503
-
-
-
-
-
 
 
 @app.get("/dashboard")
